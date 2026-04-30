@@ -54,10 +54,20 @@ The pipeline builds:
 Run from repository root:
 
     python -m pl_stress.builder \
-      --dump data/raw/plwiktionary-latest-pages-articles.xml.bz2 \
-      --polimorf data/raw/PoliMorf-0.6.7.tab \
       --db data/master.db \
       --out data/processed/exceptions.json
+
+Source behavior:
+- If source files are missing, the builder auto-downloads:
+    - Wiktionary dump from Wikimedia dumps
+    - Latest PoliMorf `.tab.gz` from Morfeusz and decompresses to `.tab`
+- Default source paths:
+    - `data/raw/plwiktionary-latest-pages-articles.xml.bz2`
+    - `data/raw/polimorf-current.tab`
+
+Useful flags:
+- `--no-polimorf` to skip PoliMorf ingestion
+- `--no-download` to fail instead of downloading missing sources
 
 Then compile binary dictionary:
 
@@ -121,6 +131,74 @@ Then in app code:
     await init();
     console.log(stress("matematyka"));
     console.log(stressInfo("prezydent"));
+
+## Polish Web Service (pnpm, TypeScript)
+
+This repository includes a pnpm package:
+- `@tilitronic/polish-web-service`
+
+### Build prerequisites
+
+The service uses WASM generated from Rust and requires:
+- `data/processed/exceptions.bin` (generated dictionary)
+- `wasm-pack` installed
+
+Generate dictionary binary:
+
+    cargo run -p builder --release
+
+Build node-target WASM package:
+
+    pnpm run build:wasm:node
+
+### Local package registration
+
+Register package globally for local testing:
+
+    cd packages/polish-web-service
+    pnpm link --global
+
+Or create a local tarball:
+
+    pnpm --filter @tilitronic/polish-web-service pack --pack-destination .local-packages
+
+Install tarball in another local project:
+
+    pnpm add /absolute/path/to/pl-stress-engine/.local-packages/tilitronic-polish-web-service-0.1.0.tgz
+
+### Run service locally
+
+From repository root:
+
+    pnpm run dev:web-service
+
+Default host/port:
+- `HOST=0.0.0.0`
+- `PORT=8787`
+
+### Service API
+
+Health check:
+
+    GET /health
+
+Stress info (query):
+
+    GET /stress?word=matematyka
+
+Stress info (JSON body):
+
+    POST /stress
+    Content-Type: application/json
+    { "word": "matematyka" }
+
+Syllable stress index only:
+
+    GET /stress/index?word=matematyka
+
+Example curl:
+
+    curl "http://localhost:8787/stress?word=matematyka"
 
 ## Distribution Checklist
 
