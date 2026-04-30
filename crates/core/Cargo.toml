@@ -1,0 +1,15 @@
+[package]
+name = "pl-stress-core"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+ahash = "0.8"
+bincode = "1"
+serde = { version = "1", features = ["derive"] }
+once_cell = "1"
+hyphenation = { version = "0.8", features = ["embed_all"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }

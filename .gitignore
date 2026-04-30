@@ -1,0 +1,30 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+.venv/
+venv/
+
+# Build artifacts
+crates/wasm/pkg/
+
+# Local generated data
+/data/master.db
+/data/raw/
+/data/processed/exceptions.json
+/data/processed/exceptions.bin
+
+# Local source archives (downloaded third-party dumps)
+/sources/*.bz2
+/sources/*.gz
+/sources/*.tab
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/settings.json

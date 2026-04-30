@@ -1,0 +1,15 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "polish-stress"
+version = "0.1.0"
+description = "Polish word stress resolver"
+requires-python = ">=3.8"
+license = { text = "AGPL-3.0-or-later" }
+
+[tool.maturin]
+manifest-path = "crates/python/Cargo.toml"
+module-name = "polish_stress"
+features = ["pyo3/extension-module"]
