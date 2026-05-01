@@ -11,6 +11,7 @@ const pkgNodePackageJsonPath = resolve(
   root,
   "crates/wasm/pkg-node/package.json",
 );
+const pkgBundlerPackageJsonPath = resolve(root, "crates/wasm/pkg/package.json");
 
 const wasmPackCandidates = [
   "wasm-pack",
@@ -31,7 +32,6 @@ const wasmPack = wasmPackCandidates.find((candidate) => {
 
 if (!wasmPack) {
   console.error("Cannot find wasm-pack.");
-  console.error("Install it first, e.g. with the official installer.");
   process.exit(1);
 }
 
@@ -42,13 +42,20 @@ const childPath = `${cargoBin}${pathSep}${process.env.PATH ?? ""}`;
 if (!existsSync(dictPath)) {
   console.error("Missing required dictionary file:");
   console.error(`  ${dictPath}`);
-  console.error(
-    "\nGenerate it first with your data pipeline, then re-run this command.",
-  );
   process.exit(1);
 }
 
-const result = spawnSync(
+const spawnOpts = {
+  stdio: "inherit",
+  shell: true,
+  cwd: root,
+  env: {
+    ...process.env,
+    PATH: childPath,
+  },
+};
+
+const resultNode = spawnSync(
   wasmPack,
   [
     "build",
@@ -59,61 +66,91 @@ const result = spawnSync(
     "--out-dir",
     "pkg-node",
   ],
-  {
-    stdio: "inherit",
-    shell: true,
-    cwd: root,
-    env: {
-      ...process.env,
-      PATH: childPath,
-    },
-  },
+  spawnOpts,
 );
 
-if (typeof result.status === "number") {
-  if (result.status === 0 && existsSync(pkgNodePackageJsonPath)) {
-    const pkgJson = JSON.parse(readFileSync(pkgNodePackageJsonPath, "utf8"));
-    pkgJson.name = "@tilitronic/polish-stress-wasm-node";
-    pkgJson.description =
-      "Node.js WebAssembly bindings for Polish stress engine - syllabification, stress placement, and IPA transcription";
-    pkgJson.author = "Tilitronic";
-    pkgJson.license = "AGPL-3.0-or-later";
-    pkgJson.repository = {
+const resultBundler = spawnSync(
+  wasmPack,
+  [
+    "build",
+    "crates/wasm",
+    "--target",
+    "bundler",
+    "--release",
+    "--out-dir",
+    "pkg",
+  ],
+  spawnOpts,
+);
+
+const ok = resultNode.status === 0 && resultBundler.status === 0;
+
+if (ok) {
+  if (existsSync(pkgNodePackageJsonPath)) {
+    const p = JSON.parse(readFileSync(pkgNodePackageJsonPath, "utf8"));
+    p.name = "@tilitronic/polish-stress-wasm-node";
+    p.description =
+      "Node.js test build of the Polish stress WASM engine (internal)";
+    p.author = "Tilitronic";
+    p.license = "AGPL-3.0-or-later";
+    p.private = true;
+    p.scripts = {
+      test: "node --test ../../../tests/npm/wasm-stress-difficult-words.test.mjs",
+    };
+    writeFileSync(
+      pkgNodePackageJsonPath,
+      `${JSON.stringify(p, null, 2)}\n`,
+      "utf8",
+    );
+  }
+
+  if (existsSync(pkgBundlerPackageJsonPath)) {
+    const p = JSON.parse(readFileSync(pkgBundlerPackageJsonPath, "utf8"));
+    p.name = "@tilitronic/polish-stress-wasm";
+    p.description =
+      "WebAssembly bindings for the Polish stress engine — syllabification, stress placement, IPA transcription. ESM/bundler build (Vite, webpack, Rollup).";
+    p.author = "Tilitronic";
+    p.license = "AGPL-3.0-or-later";
+    p.module = "pl_stress_wasm.js";
+    p.main = "pl_stress_wasm.js";
+    p.types = "pl_stress_wasm.d.ts";
+    p.sideEffects = false;
+    p.files = [
+      "pl_stress_wasm.js",
+      "pl_stress_wasm_bg.js",
+      "pl_stress_wasm_bg.wasm",
+      "pl_stress_wasm.d.ts",
+      "pl_stress_wasm_bg.wasm.d.ts",
+    ];
+    p.repository = {
       type: "git",
       url: "https://github.com/Tilitronic/pl-stress-engine.git",
       directory: "crates/wasm",
     };
-    pkgJson.keywords = [
+    p.keywords = [
       "polish",
       "stress",
       "syllable",
-      "hyphenation",
       "ipa",
       "wasm",
       "webassembly",
       "nlp",
-      "node",
+      "browser",
+      "vite",
     ];
-    pkgJson.engines = {
-      node: ">=16.0.0",
-    };
-    pkgJson.publishConfig = {
-      access: "public",
-    };
-    pkgJson.scripts = {
+    p.publishConfig = { access: "public" };
+    p.scripts = {
       pretest: "node ../../../scripts/build-wasm-node.mjs",
       test: "node --test ../../../tests/npm/wasm-stress-difficult-words.test.mjs",
       prepublishOnly: "npm test",
     };
 
     writeFileSync(
-      pkgNodePackageJsonPath,
-      `${JSON.stringify(pkgJson, null, 2)}\n`,
+      pkgBundlerPackageJsonPath,
+      `${JSON.stringify(p, null, 2)}\n`,
       "utf8",
     );
   }
-
-  process.exit(result.status);
 }
 
-process.exit(1);
+process.exit(resultNode.status ?? 1);

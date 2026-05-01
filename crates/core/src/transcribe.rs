@@ -403,6 +403,18 @@ mod pass_compose {
 
 // ── public API ────────────────────────────────────────────────────────────────
 
+/// Run tokenize + palatalize passes on a whole lowercased word and return
+/// `(ortho, is_skip)` pairs for use by the syllabifier.
+///
+/// This exposes the G2P front-end so the syllabifier can identify which
+/// tokens are softening `i` markers (is_skip = true) versus real nuclei.
+pub(crate) fn tokenize_and_palatalize(word: &str) -> Vec<(String, bool)> {
+    let mut tokens = pass_tokenize::run(word);
+    // No fallback_next across word boundary — whole word is the input.
+    pass_palatalize::run(&mut tokens, None);
+    tokens.into_iter().map(|t| (t.ortho, t.is_skip)).collect()
+}
+
 /// Produce an IPA string for the given syllable sequence.
 ///
 /// A primary-stress mark `ˈ` is inserted before `syllables[stress_idx]`.

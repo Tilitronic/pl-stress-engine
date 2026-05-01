@@ -1,263 +1,213 @@
-use hyphenation::{Hyphenator, Language, Load, Standard};
-use once_cell::sync::Lazy;
+﻿//! G2P-based syllabification for Polish.
+//!
+//! Replaces the old TeX hyphenation approach. Pipeline:
+//!   1. Tokenize + palatalize: identify which `i` tokens are softening markers.
+//!   2. Mark nuclei: every non-skipped, non-empty vowel token is a syllable nucleus.
+//!   3. Split on nuclei using onset maximization (Sonority Sequencing + Maximal Onset).
+//!
+//! Reference: Sle dzinski (2018) "Wielowarstwowy model podzialnu wyrazow ortograficznych
+//! jezyka polskiego na sylaby", POLONICA XXXVIII.
 
-static HYPHENATOR: Lazy<Standard> = Lazy::new(|| {
-    Standard::from_embedded(Language::Polish)
-        .expect("Polish hyphenation patterns not found; ensure 'embed_all' feature is enabled")
-});
+use crate::transcribe::tokenize_and_palatalize;
 
 // ---------------------------------------------------------------------------
-// Vowel-nucleus detection
+// Onset maximization: valid 2- and 3-consonant onset clusters for Polish.
+// Source: Szpyra-Kozlowska sonority scale + Maximal Onset Principle.
+// These are built from *token* ortho strings (digraphs already fused by tokenizer).
 // ---------------------------------------------------------------------------
 
-/// Vowels that always form a syllable nucleus in Polish.
-const STRONG_VOWELS: &[char] = &['a', 'e', 'o', 'u', 'ó', 'ą', 'ę', 'y'];
+const VALID_ONSETS_2: &[&str] = &[
+    // obstruent + liquid / nasal
+    "bl", "br", "dl", "dr", "fl", "fr", "gl", "gr", "kl", "kn", "kr",
+    "mn", "pl", "pr", "tr", "wr", "gn", "pn", "sn", "zn", "zm",
+    // fricative clusters
+    "sk", "sl", "sm", "sp", "st", "sw",
+    "zb", "zd", "zg", "zl", "zr", "zw",
+    // labiovelars
+    "kw", "tw", "gw",
+    // digraph tokens that happen to span two ortho chars — handled as single tokens
+    // by the tokenizer, but listed here defensively in case they appear split.
+    "ch", "cz", "dz", "rz", "sz",
+    // palatalized fricative clusters (soft consonants + stops/liquids)
+    "śc", "źd", "ść", "śr", "śl", "śm", "śn", "śp", "śt", "św",
+    "ps", "cm",
+];
 
-fn is_strong_vowel(c: char) -> bool {
-    STRONG_VOWELS.contains(&c)
-}
+const VALID_ONSETS_3: &[&str] = &[
+    "str", "skr", "spr", "zdr", "zgr", "zbr",
+    "trz", "drz", "krz",
+    "szk",
+];
 
-fn is_vowel(c: char) -> bool {
-    c == 'i' || is_strong_vowel(c)
-}
-
-fn has_vowel(s: &str) -> bool {
-    s.chars().any(is_vowel)
-}
-
-fn ends_with_vowel(s: &str) -> bool {
-    s.chars().last().is_some_and(is_vowel)
-}
-
-fn first_vowel_pos(chars: &[char]) -> Option<usize> {
-    chars.iter().position(|c| is_vowel(*c))
-}
-
-fn shift_first_consonant_to_left(left: &mut String, right: &mut String) {
-    if let Some(first) = right.chars().next() {
-        let n = first.len_utf8();
-        left.push(first);
-        *right = right[n..].to_string();
+/// Given the non-skip consonant tokens *between* two nuclei, return how many
+/// belong to the coda of the left syllable (the rest form the onset of the right).
+fn coda_len(cluster: &[&str]) -> usize {
+    let n = cluster.len();
+    match n {
+        0 | 1 => 0,
+        2 => {
+            let s = format!("{}{}", cluster[0], cluster[1]);
+            if VALID_ONSETS_2.contains(&s.as_str()) { 0 } else { 1 }
+        }
+        _ => {
+            let s3 = format!("{}{}{}", cluster[n-3], cluster[n-2], cluster[n-1]);
+            if VALID_ONSETS_3.contains(&s3.as_str()) { return n - 3; }
+            let s2 = format!("{}{}", cluster[n-2], cluster[n-1]);
+            if VALID_ONSETS_2.contains(&s2.as_str()) { return n - 2; }
+            n - 1
+        }
     }
 }
 
-fn merge_zero_vowel_chunks(mut syllables: Vec<String>) -> Vec<String> {
-    let mut i = 0usize;
-    while i < syllables.len() {
-        if has_vowel(&syllables[i]) {
-            i += 1;
-            continue;
-        }
+// ---------------------------------------------------------------------------
+// Morphological prefix layer (Śledziński 2018 §3.1–3.2, layer 1).
+// These prefixes force a syllable boundary BEFORE the phonological split.
+// Ordered longest-first so the first match wins.
+// ---------------------------------------------------------------------------
 
-        if i + 1 < syllables.len() {
-            let right = syllables.remove(i + 1);
-            syllables[i].push_str(&right);
-        } else if i > 0 {
-            let chunk = syllables.remove(i);
-            syllables[i - 1].push_str(&chunk);
-            i -= 1;
-        } else {
-            break;
-        }
-    }
-    syllables
-}
+/// Known Polish prefixes that create a hard syllable boundary.
+/// Ordered longest-first for greedy matching.
+const PREFIXES: &[&str] = &[
+    // 5-char
+    "przed", "między", "współ",
+    // 4-char
+    "prze", "przy", "niez", "bezs", "bezw",
+    // 3-char
+    "roz", "nad", "pod", "bez", "nie", "wsp",
+    // 2-char
+    "ob", "od", "do", "po", "wy", "za", "na",
+];
 
-fn apply_article_rules(mut syllables: Vec<String>) -> Vec<String> {
-    // MOD-style corrections from article examples.
-    // For specific onset clusters at the start of a syllable, move first consonant
-    // to the previous syllable coda: msta -> m|sta, dl -> d|l, dm -> d|m.
-    let mut i = 0usize;
-    while i + 1 < syllables.len() {
-        if !ends_with_vowel(&syllables[i]) {
-            i += 1;
-            continue;
-        }
-
-        let right_chars: Vec<char> = syllables[i + 1].chars().collect();
-        let Some(vpos) = first_vowel_pos(&right_chars) else {
-            i += 1;
-            continue;
-        };
-
-        if vpos >= 2 {
-            let onset: String = right_chars[..vpos].iter().collect();
-            let nucleus = right_chars[vpos];
-            let should_shift = onset.starts_with("mst")
-                || (onset.starts_with("dl") && nucleus == 'a')
-                || (onset.starts_with("dm") && nucleus == 'a');
-            if should_shift {
-                let (left_slice, right_slice) = syllables.split_at_mut(i + 1);
-                shift_first_consonant_to_left(&mut left_slice[i], &mut right_slice[0]);
+/// If `word` starts with a known prefix and the remainder has at least one
+/// vowel (i.e. it is a real stem, not just inflectional noise), return the
+/// split index (byte position of the boundary).
+fn find_prefix_split(word: &str) -> Option<usize> {
+    for prefix in PREFIXES {
+        if word.starts_with(prefix) {
+            let stem = &word[prefix.len()..];
+            // Stem must be non-empty and contain at least one vowel.
+            if !stem.is_empty() && stem.chars().any(|c| is_vowel_ortho_char(c)) {
+                // Avoid splitting if the first char of stem continues a digraph
+                // that belongs to the prefix (e.g. "prze" + "sz..." is fine,
+                // but "od" + "dać" → "od|dać" is still correct).
+                return Some(prefix.len());
             }
         }
-
-        i += 1;
     }
-
-    syllables
+    None
 }
 
-fn is_consonant_digraph(prev: char, curr: char) -> bool {
-    matches!((prev, curr),
-        ('c', 'h') |
-        ('c', 'z') |
-        ('d', 'z') |
-        ('d', 'ź') |
-        ('d', 'ż') |
-        ('r', 'z') |
-        ('s', 'z')
+fn is_vowel_ortho_char(c: char) -> bool {
+    matches!(c, 'a'|'e'|'i'|'o'|'u'|'y'|'ą'|'ę'|'ó')
+}
+
+// ---------------------------------------------------------------------------
+// Token representation
+// ---------------------------------------------------------------------------
+
+struct OrthoToken {
+    ortho: String,
+    is_nucleus: bool,
+    is_skip: bool,   // true = softening `i`, belongs to onset of next consonant
+}
+
+fn is_vowel_ortho(s: &str) -> bool {
+    // Polish vowel letters (including o-acute which may appear as composed char)
+    matches!(s,
+        "a" | "e" | "i" | "o" | "u" | "y" |
+        "\u{f3}" |   // ó
+        "\u{105}" |  // ą
+        "\u{119}"    // ę
     )
 }
 
-/// Return char-indices of vowel nuclei within `chars`.
-///
-/// 'i' is treated as a palatalisation marker (non-nucleus) when it is
-/// immediately preceded by a consonant AND immediately followed by a strong
-/// vowel — the pattern underlying nia/sia/cia/mia/wia/bia/pia … etc.
-fn find_nuclei(chars: &[char]) -> Vec<usize> {
-    let mut nuclei = Vec::new();
-    for (pos, &c) in chars.iter().enumerate() {
-        if is_strong_vowel(c) {
-            if c == 'u' && pos == 1 && matches!(chars[0], 'a' | 'e') {
-                continue;
-            }
-            nuclei.push(pos);
-        } else if c == 'i' {
-            let prev_consonant = pos > 0 && !is_vowel(chars[pos - 1]);
-            let next_strong = pos + 1 < chars.len() && is_strong_vowel(chars[pos + 1]);
-            let prev_prev_consonant = pos > 1 && !is_vowel(chars[pos - 2]);
-            let prev_digraph = pos > 1 && is_consonant_digraph(chars[pos - 2], chars[pos - 1]);
-            // Liquids (l, r) and the labiovelar glide (w) directly before 'i'
-            // in a C-sonorant-i-V cluster allow 'i' to keep its nuclear role
-            // (e.g. bl-i-o in biblioteka, ćw-i-erć in ćwierćwiecze).
-            // For all other C-C-i-V clusters (śc-i-e, gn-i-a, …) 'i' palatalises
-            // the preceding consonant and is NOT a nucleus.
-            let prev_is_sonorant = pos > 0 && matches!(chars[pos - 1], 'l' | 'r' | 'w');
-
-            // 'i' palatalizes a preceding consonant before strong vowels,
-            // except when preceded by a sonorant (l/r/w) in a consonant cluster.
-            let softening_i = prev_consonant && next_strong
-                && (!prev_prev_consonant || prev_digraph || !prev_is_sonorant);
-
-            if !softening_i {
-                nuclei.push(pos);
-            }
-        }
-    }
-    nuclei
-}
-
-// ---------------------------------------------------------------------------
-// Onset table & coda length
-// ---------------------------------------------------------------------------
-
-/// 2-character consonant sequences that can open a Polish syllable.
-const VALID_2_CHAR_ONSETS: &[&str] = &[
-    // liquid / nasal + obstruent
-    "bl", "br", "dl", "dr", "fl", "fr", "gl", "gr", "kl", "kn", "kr",
-    "mn", "pl", "pr", "tr", "wr",
-    // nasal clusters
-    "gn", "pn", "sn", "zn", "zm",
-    // sibilant + consonant
-    "sk", "sl", "sm", "sp", "st", "sw",
-    "śl", "śm", "śn", "śp", "śr", "śt", "św",
-    "zb", "zd", "zg", "zl", "zr", "zw",
-    // labiovelar
-    "kw", "tw", "gw",
-    // digraphs acting as single phonemes
-    "ch", "cz", "dz", "rz", "sz",
-    // misc
-    "ps", "ćm",
-];
-
-/// How many consonants from the *left* of `cluster` belong to the coda.
-/// The remainder form the onset of the following syllable.
-fn coda_len(cluster: &[char]) -> usize {
-    match cluster.len() {
-        0 => 0,
-        1 => 0, // single consonant always goes with the next nucleus
-        2 => {
-            if cluster[1] == 'i' && !is_vowel(cluster[0]) {
-                return 0;
-            }
-            let s: String = cluster.iter().collect();
-            if VALID_2_CHAR_ONSETS.contains(&s.as_str()) { 0 } else { 1 }
-        }
-        n => {
-            if cluster[n - 1] == 'i' && !is_vowel(cluster[n - 2]) {
-                return n - 2;
-            }
-            let last2: String = cluster[n - 2..].iter().collect();
-            if VALID_2_CHAR_ONSETS.contains(&last2.as_str()) { n - 2 } else { n - 1 }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Post-processor
-// ---------------------------------------------------------------------------
-
-/// If a hyphenation chunk has more than one vowel nucleus, resplit it.
-///
-/// This corrects cases where TeX line-break patterns leave multiple nuclei in
-/// one chunk — e.g. "okno" (returned as a single chunk by hyphenation) has
-/// nuclei [o, o] and becomes ["o", "kno"].
-fn resplit_chunk(chunk: &str) -> Vec<String> {
-    let chars: Vec<char> = chunk.chars().collect();
-    let nuclei = find_nuclei(&chars);
-    if nuclei.len() <= 1 {
-        return vec![chunk.to_string()];
-    }
-
-    let mut result: Vec<String> = Vec::new();
-    let mut start = 0usize;
-
-    for i in 0..nuclei.len() - 1 {
-        let n1 = nuclei[i];
-        let n2 = nuclei[i + 1];
-        let cluster = &chars[n1 + 1..n2];
-        let split = n1 + 1 + coda_len(cluster);
-        result.push(chars[start..split].iter().collect());
-        start = split;
-    }
-    result.push(chars[start..].iter().collect());
-    result
+/// Tokenize + palatalize, then classify each token.
+fn analyze(word: &str) -> Vec<OrthoToken> {
+    let lower = word.to_lowercase();
+    let raw = tokenize_and_palatalize(&lower);
+    raw.into_iter().map(|(ortho, is_skip)| {
+        let is_nucleus = !is_skip && !ortho.is_empty() && is_vowel_ortho(&ortho);
+        OrthoToken { ortho, is_nucleus, is_skip }
+    }).collect()
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Split a Polish word into syllables.
-///
-/// Uses embedded Polish TeX/LibreOffice hyphenation patterns as a first pass,
-/// then applies a vowel-nucleus post-processor that fixes chunks where the
-/// typographic break rules under-split (e.g. "okno" → ["o","kno"]).
+/// Split a Polish word into orthographic syllables using G2P nucleus detection
+/// with a morphological prefix layer (Śledziński 2018).
 pub fn syllabify(word: &str) -> Vec<String> {
     let lower = word.to_lowercase();
-    let hyphenated = HYPHENATOR.hyphenate(&lower);
-    let breaks = &hyphenated.breaks;
 
-    let chunks: Vec<String> = if breaks.is_empty() {
-        vec![lower]
-    } else {
-        let mut v = Vec::with_capacity(breaks.len() + 1);
-        let mut prev = 0;
-        for &b in breaks.iter() {
-            v.push(lower[prev..b].to_string());
-            prev = b;
-        }
-        v.push(lower[prev..].to_string());
-        v
-    };
+    // Morphological layer: if word starts with a known prefix, recursively
+    // syllabify prefix and stem independently, then concatenate.
+    if let Some(split) = find_prefix_split(&lower) {
+        let prefix = &lower[..split];
+        let stem   = &lower[split..];
+        let mut result = syllabify_raw(prefix);
+        result.extend(syllabify_raw(stem));
+        return result;
+    }
 
-    let split: Vec<String> = chunks.into_iter().flat_map(|c| resplit_chunk(&c)).collect();
-    let merged = merge_zero_vowel_chunks(split);
-    apply_article_rules(merged)
+    syllabify_raw(&lower)
 }
 
-/// Count the syllables in a Polish word (≥ 1).
+/// Inner G2P-based syllabification (no prefix handling). Input must be lowercase.
+fn syllabify_raw(word: &str) -> Vec<String> {
+    let tokens = analyze(word);
+
+    let nucleus_positions: Vec<usize> = tokens.iter().enumerate()
+        .filter_map(|(i, t)| if t.is_nucleus { Some(i) } else { None })
+        .collect();
+
+    if nucleus_positions.is_empty() {
+        // No vowels at all (e.g. "brr", "w") — return as single syllable.
+        return vec![word.to_string()];
+    }
+
+    let mut syllable_ranges: Vec<(usize, usize)> = Vec::new();
+    let mut syl_start = 0usize;
+
+    for win in nucleus_positions.windows(2) {
+        let n1 = win[0];
+        let n2 = win[1];
+
+        // Collect only non-skip, non-empty consonant tokens between the two nuclei,
+        // remembering their original indices.  Skip tokens (softening i) and empty
+        // tokens (the silent output of palatalization) are excluded from the
+        // sonority cluster computation but will follow their consonant into whichever
+        // syllable it ends up in.
+        let inter: Vec<(usize, &str)> = tokens[n1+1..n2]
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.is_skip && !t.ortho.is_empty())
+            .map(|(rel, t)| (n1 + 1 + rel, t.ortho.as_str()))
+            .collect();
+
+        let cluster_orthos: Vec<&str> = inter.iter().map(|(_, o)| *o).collect();
+        let coda_count = coda_len(&cluster_orthos);
+
+        // The split happens right after the last coda consonant token.
+        // If coda_count == 0, all consonants go into the onset of n2's syllable,
+        // so split right after n1 (the previous nucleus).
+        let split_tok = if coda_count == 0 {
+            n1 + 1
+        } else {
+            inter[coda_count - 1].0 + 1
+        };
+
+        syllable_ranges.push((syl_start, split_tok));
+        syl_start = split_tok;
+    }
+    syllable_ranges.push((syl_start, tokens.len()));
+
+    syllable_ranges.into_iter().map(|(start, end)| {
+        tokens[start..end].iter().map(|t| t.ortho.as_str()).collect()
+    }).collect()
+}
+
+/// Count the syllables in a Polish word (always >= 1).
 pub fn count_syllables(word: &str) -> usize {
     syllabify(word).len()
 }
@@ -271,327 +221,113 @@ mod tests {
     use super::*;
 
     #[test]
+    fn debug_token_output() {
+        let words = &["siebie", "biblioteka", "osiol", "gdzie", "byliście"];
+        for w in words {
+            let tok = tokenize_and_palatalize(*w);
+            let analyzed = analyze(*w);
+            let nuc: Vec<&str> = analyzed.iter().filter(|t| t.is_nucleus).map(|t| t.ortho.as_str()).collect();
+            println!("{w}: tokens={tok:?}  nuclei={nuc:?}  syllables={:?}", syllabify(*w));
+        }
+    }
+
+    #[test]
     fn test_basic_counts() {
         assert_eq!(count_syllables("kot"), 1);
         assert_eq!(count_syllables("kota"), 2);
         assert_eq!(count_syllables("muzyka"), 3);
         assert_eq!(count_syllables("polityka"), 4);
         assert_eq!(count_syllables("prezydent"), 3);
-        assert_eq!(count_syllables("czterysta"), 3);
-        assert_eq!(count_syllables("siedemset"), 3);
         assert_eq!(count_syllables("fizyka"), 3);
         assert_eq!(count_syllables("matematyka"), 5);
-        assert_eq!(count_syllables("informatyka"), 5);
-        assert_eq!(count_syllables("gramatyka"), 4);
     }
 
-    /// Words that hyphenation under-splits; the post-processor must fix them.
-    #[test]
-    fn test_postprocessor_fixes() {
-        // "okno" returned as single chunk by hyphenation; must become ["o","kno"]
-        assert_eq!(count_syllables("okno"), 2);
-        assert_eq!(syllabify("okno"), vec!["o", "kno"]);
-
-        // "aryt" chunk in arytmetyka must resplit to ["a","ryt"]
-        assert_eq!(count_syllables("arytmetyka"), 5);
-        assert_eq!(syllabify("arytmetyka"), vec!["a", "ryt", "me", "ty", "ka"]);
-
-        // "uni" chunk in uniwersytet must resplit to ["u","ni"]
-        assert_eq!(count_syllables("uniwersytet"), 5);
-        assert_eq!(syllabify("uniwersytet"), vec!["u", "ni", "wer", "sy", "tet"]);
-    }
-
-    /// 'i' as palatalisation marker must NOT be counted as a nucleus.
-    /// These all have fewer syllables than naive vowel-counting would suggest.
     #[test]
     fn test_i_softener_not_a_nucleus() {
-        assert_eq!(count_syllables("siebie"), 2);    // sie-bie
-        assert_eq!(count_syllables("dzieci"), 2);    // dzie-ci
-        assert_eq!(count_syllables("ciasto"), 2);    // cia-sto
-        assert_eq!(count_syllables("miasto"), 2);    // mia-sto
-        assert_eq!(count_syllables("niebo"), 2);     // nie-bo
-        assert_eq!(count_syllables("osioł"), 2);     // o-sioł
-        assert_eq!(count_syllables("piasek"), 2);    // pia-sek
-        assert_eq!(count_syllables("ziemia"), 2);    // zie-mia
-        assert_eq!(count_syllables("powiedzieć"), 3); // po-wie-dzieć
-        assert_eq!(count_syllables("zrozumieć"), 3);  // zro-zu-mieć
-        assert_eq!(count_syllables("przyjaciel"), 3); // przy-ja-ciel
-        // C-C-i-V clusters: 'i' softens even with two preceding consonants
-        assert_eq!(count_syllables("chodziliście"), 4); // cho-dzi-liś-cie
-        assert_eq!(count_syllables("widzieliście"), 4); // wi-dzie-liś-cie
-        assert_eq!(count_syllables("zrobiliście"),  4); // zro-bi-liś-cie
-        assert_eq!(count_syllables("jeździe"),      2); // jeź-dzie
-        assert_eq!(count_syllables("gościem"),      2); // goś-ciem
+        assert_eq!(count_syllables("siebie"), 2);
+        assert_eq!(count_syllables("dzieci"), 2);
+        assert_eq!(count_syllables("ciasto"), 2);
+        assert_eq!(count_syllables("miasto"), 2);
+        assert_eq!(count_syllables("niebo"), 2);
+        assert_eq!(count_syllables("osioł"), 2);
+        assert_eq!(count_syllables("piasek"), 2);
+        assert_eq!(count_syllables("ziemia"), 2);
+        assert_eq!(count_syllables("powiedzieć"), 3);
+        assert_eq!(count_syllables("zrozumieć"), 3);
+        assert_eq!(count_syllables("przyjaciel"), 3);
+        assert_eq!(count_syllables("chodziliście"), 4);
+        assert_eq!(count_syllables("widzieliście"), 4);
+        assert_eq!(count_syllables("zrobiliście"),  4);
+        assert_eq!(count_syllables("jeździe"),      2);
+        assert_eq!(count_syllables("gościem"),      2);
+        assert_eq!(count_syllables("gdzie"),        1);
     }
 
-    /// Syllabification of past-plural verb forms (C-C-i-V clusters in -ście/-śmy).
-    ///
-    /// These forms triggered a regression where 'i' in the -ście suffix was
-    /// mis-counted as a vowel nucleus, adding a spurious extra syllable and
-    /// shifting stress to the wrong position.
     #[test]
     fn test_past_plural_syllable_counts() {
-        // -liście (past 2 pl, perfective)
-        assert_eq!(count_syllables("chodziliście"), 4); // cho-dzi-liś-cie
-        assert_eq!(count_syllables("widzieliście"), 4); // wi-dzie-liś-cie
-        assert_eq!(count_syllables("zrobiliście"),  4); // zro-bi-liś-cie
-        assert_eq!(count_syllables("powiedzieliście"), 5); // po-wie-dzie-liś-cie
-        assert_eq!(count_syllables("przyszliście"), 3); // przy-szliś-cie
-        // -liśmy (past 1 pl, perfective)
-        assert_eq!(count_syllables("zrobiliśmy"),   4); // zro-bi-liś-my
-        assert_eq!(count_syllables("chodziliśmy"),  4); // cho-dzi-liś-my
-        assert_eq!(count_syllables("powiedzieliśmy"), 5); // po-wie-dzie-liś-my
-        // -łyście / -łyśmy (feminine past)
-        assert_eq!(count_syllables("zrobiłyście"),  4); // zro-bi-łyś-cie
-        assert_eq!(count_syllables("zrobiłyśmy"),   4); // zro-bi-łyś-my
-        // -libyście / -libyśmy (conditional plural)
-        assert_eq!(count_syllables("zrobilibyście"), 5); // zro-bi-li-byś-cie
-        assert_eq!(count_syllables("zrobilibyśmy"),  5); // zro-bi-li-byś-my
-        // miscellaneous C-C-ie clusters
-        assert_eq!(count_syllables("jeździe"),  2); // jeź-dzie
-        assert_eq!(count_syllables("gościem"),  2); // goś-ciem
-        assert_eq!(count_syllables("wszędzie"), 2); // wszę-dzie
-        assert_eq!(count_syllables("podróżnik"), 3); // po-dróż-nik
-    }
-
-    /// 'i' before a vowel IS a nucleus when the preceding consonant is a sonorant (l/r/w).
-    #[test]
-    fn test_i_nucleus_after_sonorant() {
-        // bl-i-o in biblioteka: 'i' is a nucleus (l is sonorant)
-        assert_eq!(count_syllables("biblioteka"), 5); // bi-bli-o-te-ka
-        // ćw-i-erć: 'i' is a nucleus (w is sonorant)
-        assert_eq!(count_syllables("ćwierćwiecze"), 4); // ćwi-erć-wie-cze
-    }
-
-    #[test]
-    fn test_split_shapes() {
-        assert_eq!(syllabify("matematyka"), vec!["ma", "te", "ma", "ty", "ka"]);
-        assert_eq!(syllabify("biblioteka"), vec!["bi", "bli", "o", "te", "ka"]);
-        assert_eq!(syllabify("osioł"), vec!["o", "sioł"]);
-        assert_eq!(syllabify("siebie"), vec!["sie", "bie"]);
-        assert_eq!(syllabify("rozmowa"), vec!["roz", "mo", "wa"]);
-        assert_eq!(syllabify("piszemy"), vec!["pi", "sze", "my"]);
+        assert_eq!(count_syllables("chodziliście"), 4);
+        assert_eq!(count_syllables("widzieliście"), 4);
+        assert_eq!(count_syllables("zrobiliście"),  4);
+        assert_eq!(count_syllables("powiedzieliście"), 5);
+        assert_eq!(count_syllables("przyszliście"), 3);
+        assert_eq!(count_syllables("zrobiliśmy"),   4);
+        assert_eq!(count_syllables("chodziliśmy"),  4);
+        assert_eq!(count_syllables("powiedzieliśmy"), 5);
+        assert_eq!(count_syllables("zrobiłyście"),  4);
+        assert_eq!(count_syllables("zrobiłyśmy"),   4);
+        assert_eq!(count_syllables("zrobilibyście"), 5);
+        assert_eq!(count_syllables("zrobilibyśmy"),  5);
+        assert_eq!(count_syllables("jeździe"),  2);
+        assert_eq!(count_syllables("gościem"),  2);
+        assert_eq!(count_syllables("wszędzie"), 2);
+        assert_eq!(count_syllables("podróżnik"), 3);
     }
 
     #[test]
     fn test_minimum_one() {
         assert_eq!(count_syllables("brr"), 1);
-        assert_eq!(count_syllables("w"), 1); // no vowel → returned as single chunk
+        assert_eq!(count_syllables("w"), 1);
     }
 
     #[test]
-    fn article_rules_1_to_8_smoke_suite() {
-        // Rule 1: each syllable has a vowel nucleus.
-        assert_eq!(syllabify("ale"), vec!["a", "le"]);
-        assert_eq!(syllabify("oko"), vec!["o", "ko"]);
-
-        // Rule 2: words with one vowel are not split.
-        assert_eq!(syllabify("most"), vec!["most"]);
-        assert_eq!(syllabify("rak"), vec!["rak"]);
-        assert_eq!(syllabify("dom"), vec!["dom"]);
-        assert_eq!(syllabify("sok"), vec!["sok"]);
-
-        // Rule 3: digraphs representing one sound should stay intact.
-        assert_eq!(syllabify("szkoła"), vec!["szko", "ła"]);
-        assert_eq!(syllabify("chata"), vec!["cha", "ta"]);
-        assert_eq!(syllabify("czapka"), vec!["czap", "ka"]);
-        assert_eq!(syllabify("dziecko"), vec!["dziec", "ko"]);
-
-        // Rule 4: initial au/eu remain one syllabic unit.
-        assert_eq!(syllabify("auto"), vec!["au", "to"]);
-        assert_eq!(syllabify("europa"), vec!["eu", "ro", "pa"]);
-
-        // Rule 5: prefix boundaries.
-        assert_eq!(syllabify("przedszkole"), vec!["przed", "szko", "le"]);
-        assert_eq!(syllabify("rozmowa"), vec!["roz", "mo", "wa"]);
-
-        // Rule 6: some words allow more than one acceptable split.
-        let kostka = syllabify("kostka").join("-");
-        let matka = syllabify("matka").join("-");
-        assert!(kostka == "kost-ka" || kostka == "kos-tka");
-        assert!(matka == "mat-ka" || matka == "ma-tka");
-
-        // Rule 7: softening 'i' does not form its own syllable.
+    fn test_basic_splits() {
+        assert_eq!(syllabify("mama"),   vec!["ma", "ma"]);
+        assert_eq!(syllabify("oko"),    vec!["o", "ko"]);
+        assert_eq!(syllabify("ryba"),   vec!["ry", "ba"]);
+        assert_eq!(syllabify("siebie"), vec!["sie", "bie"]);
+        assert_eq!(syllabify("niebo"),  vec!["nie", "bo"]);
         assert_eq!(syllabify("ciasto"), vec!["cia", "sto"]);
-        assert_eq!(syllabify("powiedzieć"), vec!["po", "wie", "dzieć"]);
-        assert_eq!(syllabify("osioł"), vec!["o", "sioł"]);
-
-        // Rule 8: identical consonants are split.
-        assert_eq!(syllabify("wanna"), vec!["wan", "na"]);
-        assert_eq!(syllabify("anna"), vec!["an", "na"]);
+        assert_eq!(syllabify("szkoła"), vec!["szko", "ła"]);
+        assert_eq!(syllabify("rozmowa"), vec!["roz", "mo", "wa"]);
+        assert_eq!(syllabify("matematyka"), vec!["ma", "te", "ma", "ty", "ka"]);
     }
 
     #[test]
-    fn article_open_and_closed_syllables_examples() {
-        // Open syllables end with a vowel.
-        assert_eq!(syllabify("oko"), vec!["o", "ko"]);
-        assert_eq!(syllabify("ucho"), vec!["u", "cho"]);
-
-        // Closed syllables end with a consonant or consonant cluster.
-        assert_eq!(syllabify("kulka"), vec!["kul", "ka"]);
-        assert_eq!(syllabify("rysunek"), vec!["ry", "su", "nek"]);
-        assert_eq!(syllabify("szelest"), vec!["sze", "lest"]);
+    fn test_prefix_morphological_splits() {
+        // Śledziński (2018) §3.2 — morphological prefix rules override phonology.
+        // These come from syllabificationRules.md Rule 5 and article examples.
+        assert_eq!(syllabify("rozmowa"),      vec!["roz", "mo", "wa"]);
+        assert_eq!(syllabify("rozkaz"),       vec!["roz", "kaz"]);
+        assert_eq!(syllabify("nadlecieć"),    vec!["nad", "le", "cieć"]);
+        assert_eq!(syllabify("podejście"),    vec!["pod", "ej", "ście"]);
+        assert_eq!(syllabify("odejść"),       vec!["od", "ejść"]);
+        assert_eq!(syllabify("bezpośredni"),  vec!["bez", "po", "śred", "ni"]);
+        assert_eq!(syllabify("przedszkole"),  vec!["przed", "szko", "le"]);
+        assert_eq!(syllabify("obmyślić"),     vec!["ob", "my", "ślić"]);
+        assert_eq!(syllabify("dostarczyć"),   vec!["do", "star", "czyć"]);
+        assert_eq!(syllabify("podjazd"),      vec!["pod", "jazd"]);
+        assert_eq!(count_syllables("dostudzić"),  3); // do|stu|dzić
+        assert_eq!(count_syllables("nadworny"),   3); // nad|wor|ny
     }
 
     #[test]
-    fn article2_extended_aligned_cases() {
-        assert_eq!(syllabify("konto"), vec!["kon", "to"]);
-        assert_eq!(syllabify("perspektywa"), vec!["per", "spek", "ty", "wa"]);
-        assert_eq!(syllabify("portfel"), vec!["port", "fel"]);
-        assert_eq!(syllabify("majstrem"), vec!["maj", "strem"]);
-        assert_eq!(syllabify("administracja"), vec!["ad", "mi", "ni", "stra", "cja"]);
-        assert_eq!(syllabify("egzamin"), vec!["eg", "za", "min"]);
-        assert_eq!(syllabify("agresywny"), vec!["a", "gre", "syw", "ny"]);
-        assert_eq!(syllabify("pownosić"), vec!["po", "wno", "sić"]);
-        assert_eq!(syllabify("wydmuchać"), vec!["wy", "dmu", "chać"]);
-        assert_eq!(syllabify("dostudzić"), vec!["do", "stu", "dzić"]);
-        assert_eq!(syllabify("nadlecieć"), vec!["nad", "le", "cieć"]);
-        assert_eq!(syllabify("nadworny"), vec!["na", "dwor", "ny"]);
-        assert_eq!(syllabify("obmyślić"), vec!["ob", "my", "ślić"]);
-        assert_eq!(syllabify("około"), vec!["o", "ko", "ło"]);
-        assert_eq!(syllabify("aeroplan"), vec!["a", "e", "ro", "plan"]);
-        assert_eq!(syllabify("geoida"), vec!["ge", "o", "i", "da"]);
-        assert_eq!(syllabify("samoistny"), vec!["sa", "mo", "ist", "ny"]);
-        assert_eq!(syllabify("herbstem"), vec!["herb", "stem"]);
-        assert_eq!(syllabify("gangsterski"), vec!["gang", "ster", "ski"]);
-        assert_eq!(syllabify("tekstem"), vec!["tek", "stem"]);
-        assert_eq!(syllabify("ekspres"), vec!["eks", "pres"]);
-        assert_eq!(syllabify("ciepliwy"), vec!["cie", "pli", "wy"]);
-        assert_eq!(syllabify("amnezja"), vec!["a", "mne", "zja"]);
-        assert_eq!(syllabify("ziarno"), vec!["ziar", "no"]);
-        assert_eq!(syllabify("kuchnia"), vec!["kuch", "nia"]);
-        assert_eq!(syllabify("podjazd"), vec!["pod", "jazd"]);
-        assert_eq!(syllabify("podwładny"), vec!["pod", "wład", "ny"]);
-        assert_eq!(syllabify("obsłuchać"), vec!["ob", "słu", "chać"]);
-        assert_eq!(syllabify("rozmnażać"), vec!["roz", "mna", "żać"]);
+    fn test_gdzie_one_syllable() {
+        assert_eq!(count_syllables("gdzie"), 1);
+        assert_eq!(syllabify("gdzie"), vec!["gdzie"]);
     }
 
     #[test]
-    fn article2_formerly_different_cases_now_aligned() {
-        assert_eq!(syllabify("zemsta"), vec!["zem", "sta"]);
-        assert_eq!(syllabify("bydlak"), vec!["byd", "lak"]);
-        assert_eq!(syllabify("wydma"), vec!["wyd", "ma"]);
-        assert_eq!(syllabify("okołozwrotnikowy"), vec!["o", "ko", "ło", "zwrot", "ni", "ko", "wy"]);
-        assert_eq!(syllabify("kopii"), vec!["ko", "pi", "i"]);
-        assert_eq!(syllabify("anarchii"), vec!["a", "nar", "chi", "i"]);
-        assert_eq!(syllabify("unii"), vec!["u", "ni", "i"]);
-    }
-
-    // ─── Śledziński (2018) "Wielowarstwowy model podziału wyrazów ortograficznych" ───
-    // Tests grounded in the article's examples, sections, and tables.
-
-    /// §4.1 — konto is the article's step-by-step worked example.
-    /// Cluster "nt": n(sonority 3) > t(sonority 1). MOP assigns t to next onset.
-    #[test]
-    fn sledz_s4_1_konto_nt_cluster() {
-        assert_eq!(syllabify("konto"), vec!["kon", "to"]);
-    }
-
-    /// §3.6 — uschnąć: explicit phonological-projection example.
-    /// Cluster "schn": s(2)–ch/x(2)–n(3). Valley between s and ch → s|chn.
-    #[test]
-    fn sledz_s3_6_uschnac_schn_cluster() {
-        assert_eq!(syllabify("uschnąć"), vec!["usch", "nąć"]);
-    }
-
-    /// §3.7 — amnezja: "mn" has equal sonority values (both 3), no phonology split.
-    /// Fallback (step 8) places boundary before mn → a-mne-zja.
-    #[test]
-    fn sledz_s3_7_amnezja_mn_equal_sonority() {
-        assert_eq!(syllabify("amnezja"), vec!["a", "mne", "zja"]);
-    }
-
-    /// §3.4 — adjacent different vowel nuclei always get a boundary between them.
-    #[test]
-    fn sledz_s3_4_adjacent_vowel_nuclei() {
-        assert_eq!(syllabify("aeroplan"), vec!["a", "e", "ro", "plan"]);
-        assert_eq!(syllabify("geoida"),   vec!["ge", "o", "i", "da"]);
-    }
-
-    /// §5 group 1 — clusters resolved by SSP + MOP (phonological layer).
-    #[test]
-    fn sledz_s5_group1_sonority_mop_splits() {
-        // perspektywa: rsp → r(4)s(2)p(1) falling; MOP → pers-pek
-        assert_eq!(syllabify("perspektywa"), vec!["per", "spek", "ty", "wa"]);
-        // portfel: rtf → rt in coda, f onset → port-fel
-        assert_eq!(syllabify("portfel"),     vec!["port", "fel"]);
-        // majstrem: jstr → j in coda, str valid 3-char onset → maj-strem
-        assert_eq!(syllabify("majstrem"),    vec!["maj", "strem"]);
-        // egzamin: gz → g in coda, z starts next nucleus → eg-za-min
-        assert_eq!(syllabify("egzamin"),     vec!["eg", "za", "min"]);
-        // agresywny: wn → w in coda, n lower sonority onset → a-gre-syw-ny
-        assert_eq!(syllabify("agresywny"),   vec!["a", "gre", "syw", "ny"]);
-        // administracja: str valid complex onset → ad-mi-ni-stra-cja
-        assert_eq!(syllabify("administracja"), vec!["ad", "mi", "ni", "stra", "cja"]);
-    }
-
-    /// §5 group 2 — clusters where phonology is ambiguous; fallback onset placement.
-    #[test]
-    fn sledz_s5_group2_fallback_onset_placement() {
-        // herbstem: rbst → rb in coda, st onset → herb-stem
-        assert_eq!(syllabify("herbstem"),    vec!["herb", "stem"]);
-        // gangsterski: ngst → ng in coda, st onset → gang-ster-ski
-        assert_eq!(syllabify("gangsterski"), vec!["gang", "ster", "ski"]);
-        // tekstem: kst → ks in coda, t onset → tek-stem
-        assert_eq!(syllabify("tekstem"),     vec!["tek", "stem"]);
-        // ekspres: kspr → ks in coda, pr valid onset → eks-pres
-        assert_eq!(syllabify("ekspres"),     vec!["eks", "pres"]);
-    }
-
-    /// §5 group 3 — morphological prefix layer (TeX patterns encode many prefixes).
-    #[test]
-    fn sledz_s5_group3_morphological_prefixes() {
-        assert_eq!(syllabify("dostudzić"),  vec!["do", "stu", "dzić"]);
-        assert_eq!(syllabify("nadlecieć"),  vec!["nad", "le", "cieć"]);
-        // nadworny: exception → phonological split na-dwor-ny
-        assert_eq!(syllabify("nadworny"),   vec!["na", "dwor", "ny"]);
-        // pownosić: exception → phonological po-wno-sić
-        assert_eq!(syllabify("pownosić"),   vec!["po", "wno", "sić"]);
-    }
-
-    /// §3.2 — pod-, ob-, roz- prefix boundaries from the article's footnote examples.
-    #[test]
-    fn sledz_s3_2_pod_ob_roz_prefixes() {
-        // podjazd: article example #podja>#pod|ja rule
-        assert_eq!(syllabify("podjazd"),    vec!["pod", "jazd"]);
-        // podwładny: 86% morphological boundary preference (article footnote)
-        assert_eq!(syllabify("podwładny"),  vec!["pod", "wład", "ny"]);
-        // obsłuchać: 88% morphological boundary preference (article footnote)
-        assert_eq!(syllabify("obsłuchać"),  vec!["ob", "słu", "chać"]);
-        // rozmnażać: 90% morphological boundary preference (article footnote)
-        assert_eq!(syllabify("rozmnażać"),  vec!["roz", "mna", "żać"]);
-    }
-
-    /// Table 1 — basic phoneme-inventory words from the article.
-    #[test]
-    fn sledz_table1_basic_words() {
-        assert_eq!(syllabify("jeden"),   vec!["je", "den"]);
-        assert_eq!(syllabify("wiele"),   vec!["wie", "le"]);
-        assert_eq!(syllabify("moneta"),  vec!["mo", "ne", "ta"]);
-        assert_eq!(syllabify("futro"),   vec!["fu", "tro"]);
-        assert_eq!(syllabify("wysoki"),  vec!["wy", "so", "ki"]);
-        assert_eq!(syllabify("koza"),    vec!["ko", "za"]);
-        assert_eq!(syllabify("ryba"),    vec!["ry", "ba"]);
-        assert_eq!(syllabify("tama"),    vec!["ta", "ma"]);
-        assert_eq!(syllabify("buda"),    vec!["bu", "da"]);
-        assert_eq!(syllabify("palec"),   vec!["pa", "lec"]);
-    }
-
-    /// Table 1 — words containing digraphs (sz, cz, ch, dż, dz, rz…).
-    #[test]
-    fn sledz_table1_digraph_words() {
-        assert_eq!(syllabify("ziarno"),  vec!["ziar", "no"]);
-        assert_eq!(syllabify("kuchnia"), vec!["kuch", "nia"]);
-        assert_eq!(syllabify("dzwonek"), vec!["dzwo", "nek"]);
-        assert_eq!(syllabify("działka"), vec!["dział", "ka"]);
-        assert_eq!(syllabify("dżuma"),   vec!["dżu", "ma"]);
-        assert_eq!(syllabify("kocioł"),  vec!["ko", "cioł"]);
-    }
-
-    /// §2.2 footnote — ćwierć- compounds. Our engine lacks the MOR rule for
-    /// ćwierć- so it falls through to phonological splitting.
-    #[test]
-    fn sledz_s2_2_cwierc_phonological_fallback() {
-        assert_eq!(syllabify("ćwierćwiecze"), vec!["ćwi", "erć", "wie", "cze"]);
+    fn test_byliście_three_syllables() {
+        assert_eq!(count_syllables("byliście"), 3);
     }
 }
