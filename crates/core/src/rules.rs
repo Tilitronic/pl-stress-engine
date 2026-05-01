@@ -94,13 +94,28 @@ mod tests {
 
     #[test]
     fn test_past_plural_antepenultimate() {
-        // zrobiliśmy: 5 syllables → index 2
-        let n = crate::count_syllables("zrobiliśmy");
-        let r = apply_rules("zrobiliśmy", n);
-        assert!(r.is_some());
-        let (idx, conf) = r.unwrap();
-        assert_eq!(conf, Confidence::Rule);
-        assert_eq!(idx, n - 3);
+        // All -liście / -liśmy / -łyście / -łyśmy forms → stress on antepenultimate.
+        // This also guards against a syllabification regression where 'i' in -ście
+        // was mis-counted as a vowel nucleus, adding a spurious syllable.
+        let cases: &[(&str, usize)] = &[
+            ("zrobiliśmy",     4), // zro-bi-liś-my     → stress index 1 (bi)
+            ("chodziliśmy",    4), // cho-dzi-liś-my    → stress index 1 (dzi)
+            ("zrobiliście",    4), // zro-bi-liś-cie    → stress index 1 (bi)
+            ("chodziliście",   4), // cho-dzi-liś-cie   → stress index 1 (dzi)
+            ("widzieliście",   4), // wi-dzie-liś-cie   → stress index 1 (dzie)
+            ("powiedzieliście",5), // po-wie-dzie-liś-cie → stress index 2 (dzie)
+            ("zrobiłyście",    4), // zro-bi-łyś-cie    → stress index 1 (bi)
+            ("zrobiłyśmy",     4), // zro-bi-łyś-my     → stress index 1 (bi)
+        ];
+        for &(word, expected_syllables) in cases {
+            let n = crate::count_syllables(word);
+            assert_eq!(n, expected_syllables, "syllable count wrong for {word:?}");
+            let r = apply_rules(word, n);
+            assert!(r.is_some(), "no rule matched for {word:?}");
+            let (idx, conf) = r.unwrap();
+            assert_eq!(conf, Confidence::Rule, "wrong confidence for {word:?}");
+            assert_eq!(idx, n.saturating_sub(3), "wrong stress index for {word:?}");
+        }
     }
 
     #[test]

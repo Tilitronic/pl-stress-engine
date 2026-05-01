@@ -128,10 +128,17 @@ fn find_nuclei(chars: &[char]) -> Vec<usize> {
             let next_strong = pos + 1 < chars.len() && is_strong_vowel(chars[pos + 1]);
             let prev_prev_consonant = pos > 1 && !is_vowel(chars[pos - 2]);
             let prev_digraph = pos > 1 && is_consonant_digraph(chars[pos - 2], chars[pos - 1]);
+            // Liquids (l, r) and the labiovelar glide (w) directly before 'i'
+            // in a C-sonorant-i-V cluster allow 'i' to keep its nuclear role
+            // (e.g. bl-i-o in biblioteka, ćw-i-erć in ćwierćwiecze).
+            // For all other C-C-i-V clusters (śc-i-e, gn-i-a, …) 'i' palatalises
+            // the preceding consonant and is NOT a nucleus.
+            let prev_is_sonorant = pos > 0 && matches!(chars[pos - 1], 'l' | 'r' | 'w');
 
-            // 'i' usually palatalizes a preceding consonant before strong vowels,
-            // but after true consonant clusters (e.g. bl-i-o) it can remain a nucleus.
-            let softening_i = prev_consonant && next_strong && (!prev_prev_consonant || prev_digraph);
+            // 'i' palatalizes a preceding consonant before strong vowels,
+            // except when preceded by a sonorant (l/r/w) in a consonant cluster.
+            let softening_i = prev_consonant && next_strong
+                && (!prev_prev_consonant || prev_digraph || !prev_is_sonorant);
 
             if !softening_i {
                 nuclei.push(pos);
@@ -309,6 +316,51 @@ mod tests {
         assert_eq!(count_syllables("powiedzieć"), 3); // po-wie-dzieć
         assert_eq!(count_syllables("zrozumieć"), 3);  // zro-zu-mieć
         assert_eq!(count_syllables("przyjaciel"), 3); // przy-ja-ciel
+        // C-C-i-V clusters: 'i' softens even with two preceding consonants
+        assert_eq!(count_syllables("chodziliście"), 4); // cho-dzi-liś-cie
+        assert_eq!(count_syllables("widzieliście"), 4); // wi-dzie-liś-cie
+        assert_eq!(count_syllables("zrobiliście"),  4); // zro-bi-liś-cie
+        assert_eq!(count_syllables("jeździe"),      2); // jeź-dzie
+        assert_eq!(count_syllables("gościem"),      2); // goś-ciem
+    }
+
+    /// Syllabification of past-plural verb forms (C-C-i-V clusters in -ście/-śmy).
+    ///
+    /// These forms triggered a regression where 'i' in the -ście suffix was
+    /// mis-counted as a vowel nucleus, adding a spurious extra syllable and
+    /// shifting stress to the wrong position.
+    #[test]
+    fn test_past_plural_syllable_counts() {
+        // -liście (past 2 pl, perfective)
+        assert_eq!(count_syllables("chodziliście"), 4); // cho-dzi-liś-cie
+        assert_eq!(count_syllables("widzieliście"), 4); // wi-dzie-liś-cie
+        assert_eq!(count_syllables("zrobiliście"),  4); // zro-bi-liś-cie
+        assert_eq!(count_syllables("powiedzieliście"), 5); // po-wie-dzie-liś-cie
+        assert_eq!(count_syllables("przyszliście"), 3); // przy-szliś-cie
+        // -liśmy (past 1 pl, perfective)
+        assert_eq!(count_syllables("zrobiliśmy"),   4); // zro-bi-liś-my
+        assert_eq!(count_syllables("chodziliśmy"),  4); // cho-dzi-liś-my
+        assert_eq!(count_syllables("powiedzieliśmy"), 5); // po-wie-dzie-liś-my
+        // -łyście / -łyśmy (feminine past)
+        assert_eq!(count_syllables("zrobiłyście"),  4); // zro-bi-łyś-cie
+        assert_eq!(count_syllables("zrobiłyśmy"),   4); // zro-bi-łyś-my
+        // -libyście / -libyśmy (conditional plural)
+        assert_eq!(count_syllables("zrobilibyście"), 5); // zro-bi-li-byś-cie
+        assert_eq!(count_syllables("zrobilibyśmy"),  5); // zro-bi-li-byś-my
+        // miscellaneous C-C-ie clusters
+        assert_eq!(count_syllables("jeździe"),  2); // jeź-dzie
+        assert_eq!(count_syllables("gościem"),  2); // goś-ciem
+        assert_eq!(count_syllables("wszędzie"), 2); // wszę-dzie
+        assert_eq!(count_syllables("podróżnik"), 3); // po-dróż-nik
+    }
+
+    /// 'i' before a vowel IS a nucleus when the preceding consonant is a sonorant (l/r/w).
+    #[test]
+    fn test_i_nucleus_after_sonorant() {
+        // bl-i-o in biblioteka: 'i' is a nucleus (l is sonorant)
+        assert_eq!(count_syllables("biblioteka"), 5); // bi-bli-o-te-ka
+        // ćw-i-erć: 'i' is a nucleus (w is sonorant)
+        assert_eq!(count_syllables("ćwierćwiecze"), 4); // ćwi-erć-wie-cze
     }
 
     #[test]
