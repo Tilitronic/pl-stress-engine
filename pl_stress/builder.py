@@ -45,6 +45,9 @@ MORFEUSZ_INDEX_URL = "https://download.sgjp.pl/morfeusz/current/"
 DEFAULT_DUMP_PATH = Path("data/raw/plwiktionary-latest-pages-articles.xml.bz2")
 DEFAULT_POLIMORF_PATH = Path("data/raw/polimorf-current.tab")
 
+README_STATS_BEGIN = "<!-- EXCEPTIONS_STATS:BEGIN -->"
+README_STATS_END = "<!-- EXCEPTIONS_STATS:END -->"
+
 
 def _download(url: str, dst: Path, log, verbose: bool) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +76,62 @@ def _gunzip(src_gz: Path, dst_tab: Path, log, verbose: bool) -> None:
         log(f"  → {dst_tab}")
     with gzip.open(src_gz, "rb") as f_in, open(dst_tab, "wb") as f_out:
         shutil.copyfileobj(f_in, f_out)
+
+
+def _count_exceptions_entries(out_path: Path) -> tuple[int, int]:
+    """Return `(total_entries, with_ipa_entries)` from exceptions.json text.
+
+    We intentionally count by key-pattern occurrences instead of full JSON parse,
+    because upstream dumps can occasionally produce duplicate object keys that some
+    strict parsers reject.
+    """
+    text = out_path.read_text(encoding="utf-8")
+    total = len(re.findall(r'"stress_idx"\s*:', text))
+    null_ipa = len(re.findall(r'"ipa"\s*:\s*null', text))
+    with_ipa = max(0, total - null_ipa)
+    return total, with_ipa
+
+
+def _upsert_readme_exception_stats(out_path: Path, log, verbose: bool) -> None:
+    """Insert/update the auto-generated exception stats block in README.md."""
+    repo_root = Path(__file__).resolve().parents[1]
+    readme_path = repo_root / "README.md"
+    if not readme_path.exists() or not out_path.exists():
+        return
+
+    total, with_ipa = _count_exceptions_entries(out_path)
+    generated_block = (
+        f"{README_STATS_BEGIN}\n"
+        "- Exception dictionary entries: **{total:,}**\n"
+        "- Entries with IPA: **{with_ipa:,}**\n"
+        "- Source datasets: Polish Wiktionary dump + PoliMorf morphological dictionary\n"
+        "- Generated from: `data/processed/exceptions.json` by `python -m pl_stress.builder`\n"
+        f"{README_STATS_END}"
+    ).format(total=total, with_ipa=with_ipa)
+
+    readme_text = readme_path.read_text(encoding="utf-8")
+    block_re = re.compile(
+        rf"{re.escape(README_STATS_BEGIN)}[\\s\\S]*?{re.escape(README_STATS_END)}",
+        re.MULTILINE,
+    )
+
+    if block_re.search(readme_text):
+        updated = block_re.sub(generated_block, readme_text)
+    else:
+        anchor = "## Data Pipeline"
+        insert = (
+            "\n## Exception Dictionary (Auto Stats)\n\n"
+            f"{generated_block}\n"
+        )
+        if anchor in readme_text:
+            updated = readme_text.replace(anchor, insert + "\n" + anchor, 1)
+        else:
+            updated = readme_text.rstrip() + "\n\n" + insert
+
+    if updated != readme_text:
+        readme_path.write_text(updated, encoding="utf-8")
+        if verbose:
+            log(f"  → updated README exception stats ({total:,} entries)")
 
 
 def _ensure_wiktionary_dump(path: Path, auto_download: bool, log, verbose: bool) -> Path:
@@ -143,6 +202,7 @@ def build(
     log("[3/3] Exporting to JSON…")
     n_out = export_json(conn, out_path, verbose=verbose)
     log(f"  → {n_out:,} entries written to {out_path}")
+    _upsert_readme_exception_stats(out_path, log, verbose)
 
     conn.close()
     return n_out

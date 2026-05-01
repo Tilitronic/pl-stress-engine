@@ -49,6 +49,16 @@ When contributing changes that touch external data sources:
 4. Keep attribution text and required notices when distributing derived artifacts.
 5. If license terms are unclear for a source, do not merge data-derived artifacts from that source until clarified.
 
+## Exception Dictionary (Auto Stats)
+
+<!-- EXCEPTIONS_STATS:BEGIN -->
+
+- Exception dictionary entries: **158,983**
+- Entries with IPA: **104,786**
+- Source datasets: Polish Wiktionary dump + PoliMorf morphological dictionary
+- Generated from: `data/processed/exceptions.json` by `python -m pl_stress.builder`
+<!-- EXCEPTIONS_STATS:END -->
+
 ## Data Pipeline
 
 The pipeline builds:
