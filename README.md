@@ -246,8 +246,3 @@ The syllabification and stress tests in this repository were aligned against the
 2. Śledziński, Daniel. "Wielowarstwowy model podziału wyrazów ortograficznych języka polskiego na sylaby." Polonica (2018).
 3. Wągiel, Marcin. "Międzynarodowy alfabet fonetyczny (IPA) w transkrypcji fonetycznej języka polskiego." W S. Gajda & I. Jokiel (Red.), Polonistyka wobec wyzwań współczesności: V Kongres Polonistyki Zagranicznej (2014): 134-145.
 4. Nagórko, Alicja. Podręczna gramatyka języka polskiego. Wydawn. Naukowe PWN, 2010.
-
-Notes:
-
-- Reference 1 drives algorithmic syllabification coverage and rule-oriented split cases.
-- Reference 2 drives SSP/MOP, morphology-based boundary cases, and multi-layer split tests.

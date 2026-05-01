@@ -9,7 +9,8 @@
     "test:wasm:node": "node --test tests/npm/*.test.mjs",
     "verify:wasm:node": "pnpm run build:wasm:node && pnpm run test:wasm:node",
     "verify:wasm:bundler": "pnpm run build:wasm:bundler && pnpm run test:wasm:node",
-    "publish:wasm:node": "pnpm run verify:wasm:bundler && npm publish ./crates/wasm/pkg-bundler --access public",
+    "publish:wasm:bundler": "pnpm run verify:wasm:bundler && npm publish ./crates/wasm/pkg-bundler --access public",
+    "publish:wasm:node": "pnpm run verify:wasm:node && npm publish ./crates/wasm/pkg-node --access public",
     "dev:web-service": "pnpm --filter @tilitronic/polish-web-service dev",
     "start:web-service": "pnpm --filter @tilitronic/polish-web-service start"
   }

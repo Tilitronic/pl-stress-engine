@@ -74,6 +74,16 @@ if (typeof result.status === "number") {
   if (result.status === 0 && existsSync(pkgBundlerPackageJsonPath)) {
     const pkgJson = JSON.parse(readFileSync(pkgBundlerPackageJsonPath, "utf8"));
     pkgJson.name = "@tilitronic/polish-stress-wasm";
+    pkgJson.main = "pl_stress_wasm.js";
+    pkgJson.module = "pl_stress_wasm.js";
+    pkgJson.exports = {
+      ".": {
+        types: "./pl_stress_wasm.d.ts",
+        import: "./pl_stress_wasm.js",
+        default: "./pl_stress_wasm.js",
+      },
+      "./pl_stress_wasm_bg.wasm": "./pl_stress_wasm_bg.wasm",
+    };
     pkgJson.description =
       "WebAssembly bindings for Polish stress engine — bundler target (Vite, webpack, etc.)";
     pkgJson.author = "Tilitronic";

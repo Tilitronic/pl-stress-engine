@@ -73,9 +73,9 @@ const result = spawnSync(
 if (typeof result.status === "number") {
   if (result.status === 0 && existsSync(pkgNodePackageJsonPath)) {
     const pkgJson = JSON.parse(readFileSync(pkgNodePackageJsonPath, "utf8"));
-    pkgJson.name = "@tilitronic/polish-stress-wasm";
+    pkgJson.name = "@tilitronic/polish-stress-wasm-node";
     pkgJson.description =
-      "WebAssembly bindings for Polish stress engine - syllabification, stress placement, and IPA transcription";
+      "Node.js WebAssembly bindings for Polish stress engine - syllabification, stress placement, and IPA transcription";
     pkgJson.author = "Tilitronic";
     pkgJson.license = "AGPL-3.0-or-later";
     pkgJson.repository = {
@@ -92,6 +92,7 @@ if (typeof result.status === "number") {
       "wasm",
       "webassembly",
       "nlp",
+      "node",
     ];
     pkgJson.engines = {
       node: ">=16.0.0",
