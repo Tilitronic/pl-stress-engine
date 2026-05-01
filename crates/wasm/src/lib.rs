@@ -53,9 +53,10 @@ pub fn stress_info(word: &str) -> js_sys::Object {
         set!("syllables",     syllables_arr.into());
         set!("syllableIndex", JsValue::from(r.syllable_index as u32));
         set!("stressFromEnd", JsValue::from(r.stress_from_end() as u32));
-        set!("ipa",           r.ipa.as_deref().map(JsValue::from_str)
-                                   .unwrap_or(JsValue::NULL));
-        set!("confidence",    JsValue::from_str(conf));
+        set!("ipa",              r.ipa.as_deref().map(JsValue::from_str)
+                                     .unwrap_or(JsValue::NULL));
+        set!("ipaTranscribed",   JsValue::from_str(&r.ipa_transcribed()));
+        set!("confidence",       JsValue::from_str(conf));
     });
     obj
 }

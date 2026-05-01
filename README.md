@@ -1,6 +1,7 @@
 # pl-stress-engine
 
 Polish word stress engine with:
+
 - Rust core library
 - Python bindings (PyO3)
 - WebAssembly bindings for browser usage
@@ -12,11 +13,13 @@ This repository is licensed under GNU AGPL v3.0 or later.
 See [LICENSE](LICENSE).
 
 Important:
+
 - Code license and data licenses are not the same thing.
 - AGPL covers this codebase.
 - Third-party lexical data keeps its original licenses and attribution requirements.
 
 Compatibility summary used by this project:
+
 - PoliMorf is treated as permissive (BSD-style) data based on local source notes, pending version-level verification.
 - Wiktionary data is treated as attribution/share-alike content; generated dictionary artifacts may carry those obligations.
 - Therefore, AGPL applies to project code, while data-derived artifacts must also satisfy source-data terms.
@@ -24,12 +27,14 @@ Compatibility summary used by this project:
 ## Third-Party Data and Legal Compliance
 
 This project can ingest data from:
+
 - Polish Wiktionary dump
 - PoliMorf morphological dictionary
 
 Before using, redistributing, or publishing artifacts built from these sources, read [THIRD_PARTY_DATA.md](THIRD_PARTY_DATA.md).
 
 Compliance model used in this repository:
+
 - Source dumps are treated as third-party content.
 - Attribution and downstream license obligations must be preserved.
 - Derived dictionary artifacts can inherit obligations from source datasets.
@@ -47,6 +52,7 @@ When contributing changes that touch external data sources:
 ## Data Pipeline
 
 The pipeline builds:
+
 - SQLite master DB
 - processed JSON exceptions
 - compact binary exceptions file embedded into Python and WASM crates
@@ -58,14 +64,16 @@ Run from repository root:
       --out data/processed/exceptions.json
 
 Source behavior:
+
 - If source files are missing, the builder auto-downloads:
-    - Wiktionary dump from Wikimedia dumps
-    - Latest PoliMorf `.tab.gz` from Morfeusz and decompresses to `.tab`
+  - Wiktionary dump from Wikimedia dumps
+  - Latest PoliMorf `.tab.gz` from Morfeusz and decompresses to `.tab`
 - Default source paths:
-    - `data/raw/plwiktionary-latest-pages-articles.xml.bz2`
-    - `data/raw/polimorf-current.tab`
+  - `data/raw/plwiktionary-latest-pages-articles.xml.bz2`
+  - `data/raw/polimorf-current.tab`
 
 Useful flags:
+
 - `--no-polimorf` to skip PoliMorf ingestion
 - `--no-download` to fail instead of downloading missing sources
 
@@ -74,6 +82,7 @@ Then compile binary dictionary:
     cargo run -p builder --release
 
 This writes:
+
 - data/processed/exceptions.json
 - data/processed/exceptions.bin
 
@@ -100,6 +109,7 @@ Build WASM package:
     C:\Users\qualt\.cargo\bin\wasm-pack.exe build crates/wasm --target web --release
 
 Generated package:
+
 - crates/wasm/pkg/pl_stress_wasm.js
 - crates/wasm/pkg/pl_stress_wasm_bg.wasm
 
@@ -111,6 +121,7 @@ Generated package:
     print(info)
 
 Fields:
+
 - word
 - syllables
 - syllable_index
@@ -135,11 +146,13 @@ Then in app code:
 ## Polish Web Service (pnpm, TypeScript)
 
 This repository includes a pnpm package:
+
 - `@tilitronic/polish-web-service`
 
 ### Build prerequisites
 
 The service uses WASM generated from Rust and requires:
+
 - `data/processed/exceptions.bin` (generated dictionary)
 - `wasm-pack` installed
 
@@ -173,6 +186,7 @@ From repository root:
     pnpm run dev:web-service
 
 Default host/port:
+
 - `HOST=0.0.0.0`
 - `PORT=8787`
 
@@ -213,3 +227,17 @@ Before publishing wheels, wasm packages, or API services that embed generated di
 
 This README is a practical compliance guide for contributors, not legal advice.
 For commercial distribution or legal uncertainty, ask qualified legal counsel before release.
+
+## Linguistic References
+
+The syllabification and stress tests in this repository were aligned against these references:
+
+1. Śledziński, Daniel. "Rozwój programu dla podziału tekstów w języku polskim na sylaby." Vol. IX: 193.
+2. Śledziński, Daniel. "Wielowarstwowy model podziału wyrazów ortograficznych języka polskiego na sylaby." Polonica (2018).
+3. Wągiel, Marcin. "Międzynarodowy alfabet fonetyczny (IPA) w transkrypcji fonetycznej języka polskiego." W S. Gajda & I. Jokiel (Red.), Polonistyka wobec wyzwań współczesności: V Kongres Polonistyki Zagranicznej (2014): 134-145.
+4. Nagórko, Alicja. Podręczna gramatyka języka polskiego. Wydawn. Naukowe PWN, 2010.
+
+Notes:
+
+- Reference 1 drives algorithmic syllabification coverage and rule-oriented split cases.
+- Reference 2 drives SSP/MOP, morphology-based boundary cases, and multi-layer split tests.

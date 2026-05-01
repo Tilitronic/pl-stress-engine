@@ -12,6 +12,12 @@ venv/
 
 # Build artifacts
 crates/wasm/pkg/
+crates/wasm/pkg-node/
+
+# Node / pnpm
+node_modules/
+packages/*/node_modules/
+pnpm-lock.yaml
 
 # Local generated data
 /data/master.db
@@ -28,3 +34,4 @@ crates/wasm/pkg/
 .DS_Store
 Thumbs.db
 .vscode/settings.json
+/ignored

@@ -1,0 +1,23 @@
+{
+  "name": "@tilitronic/polish-web-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HTTP web service exposing Polish stress resolution",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "predev": "pnpm -w run build:wasm:node",
+    "dev": "tsx watch src/server.ts",
+    "prestart": "pnpm -w run build:wasm:node",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fastify": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

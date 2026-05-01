@@ -1,0 +1,16 @@
+{
+  "name": "pl-stress-engine-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "build:wasm:node": "node scripts/build-wasm-node.mjs",
+    "build:wasm:bundler": "node scripts/build-wasm-bundler.mjs",
+    "test:wasm:node": "node --test tests/npm/*.test.mjs",
+    "verify:wasm:node": "pnpm run build:wasm:node && pnpm run test:wasm:node",
+    "verify:wasm:bundler": "pnpm run build:wasm:bundler && pnpm run test:wasm:node",
+    "publish:wasm:node": "pnpm run verify:wasm:bundler && npm publish ./crates/wasm/pkg-bundler --access public",
+    "dev:web-service": "pnpm --filter @tilitronic/polish-web-service dev",
+    "start:web-service": "pnpm --filter @tilitronic/polish-web-service start"
+  }
+}

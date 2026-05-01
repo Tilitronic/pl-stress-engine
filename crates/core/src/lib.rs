@@ -1,9 +1,11 @@
 mod syllabify;
 mod dict;
 mod rules;
+mod transcribe;
 
 pub use dict::{init_global_dict, global_dict, DictEntry, StressDict};
 pub use syllabify::{count_syllables, syllabify};
+pub use transcribe::transcribe;
 
 /// How the stress was determined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,5 +40,14 @@ impl StressResult {
     /// The text of the stressed syllable, or `None` for empty words.
     pub fn stressed_syllable(&self) -> Option<&str> {
         self.syllables.get(self.syllable_index).map(String::as_str)
+    }
+
+    /// Compute IPA transcription from orthographic rules.
+    /// Falls back to the exception-dictionary `ipa` field if present.
+    pub fn ipa_transcribed(&self) -> String {
+        if let Some(dict_ipa) = &self.ipa {
+            return dict_ipa.clone();
+        }
+        transcribe::transcribe(&self.syllables, self.syllable_index)
     }
 }

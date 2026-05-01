@@ -13,3 +13,6 @@ hyphenation = { version = "0.8", features = ["embed_all"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[dev-dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
