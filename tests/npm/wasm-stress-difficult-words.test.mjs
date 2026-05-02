@@ -28,6 +28,8 @@ test("difficult Polish words have expected stress-from-end", async (t) => {
       const expectedIndex =
         info.syllables.length - sample.expectedStressFromEnd;
       assert.equal(info.syllableIndex, expectedIndex);
+      assert.ok(Array.isArray(info.ipaSyllables));
+      assert.equal(info.ipaSyllables.length, info.syllables.length);
     });
   }
 });

@@ -24,9 +24,11 @@ pub fn stress(word: &str) -> usize {
 /// {
 ///   "word":          "zrobiliśmy",
 ///   "syllables":     ["zro", "bi", "li", "śmy"],
+///   "ipaSyllables":  ["zrɔ", "bʲi", "lʲi", "ɕmɨ"],
 ///   "syllableIndex": 2,
 ///   "stressFromEnd": 2,
 ///   "ipa":           "zrɔˈbʲiliɕmɨ",   // null if not in dictionary
+///   "ipaTranscribed": "zrɔˈbʲiliɕmɨ",  // always available from G2P
 ///   "confidence":    "exact"            // "exact" | "rule" | "default"
 /// }
 /// ```
@@ -44,6 +46,10 @@ pub fn stress_info(word: &str) -> js_sys::Object {
         for s in &r.syllables {
             syllables_arr.push(&JsValue::from_str(s));
         }
+        let ipa_syllables_arr = js_sys::Array::new();
+        for s in r.ipa_transcribed_syllables() {
+            ipa_syllables_arr.push(&JsValue::from_str(&s));
+        }
         macro_rules! set {
             ($key:expr, $val:expr) => {
                 js_sys::Reflect::set(&obj, &$key.into(), &$val).unwrap();
@@ -51,6 +57,7 @@ pub fn stress_info(word: &str) -> js_sys::Object {
         }
         set!("word",          JsValue::from_str(word));
         set!("syllables",     syllables_arr.into());
+        set!("ipaSyllables",  ipa_syllables_arr.into());
         set!("syllableIndex", JsValue::from(r.syllable_index as u32));
         set!("stressFromEnd", JsValue::from(r.stress_from_end() as u32));
         set!("ipa",              r.ipa.as_deref().map(JsValue::from_str)

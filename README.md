@@ -137,21 +137,46 @@ Fields:
 - syllable_index
 - stress_from_end
 - ipa
+- ipa_transcribed
+- ipa_syllables
 - confidence
 
 ## Web Usage
 
-Install package in your web app:
+Install browser package:
 
-    npm install /absolute/path/to/pl-stress-engine/crates/wasm/pkg
+    npm install @tilitronic/polish-stress-wasm
 
 Then in app code:
 
-    import init, { stress, stressInfo } from "pl_stress_wasm";
+    import { stress, stressInfo } from "@tilitronic/polish-stress-wasm";
 
-    await init();
     console.log(stress("matematyka"));
-    console.log(stressInfo("prezydent"));
+    console.log(stressInfo("chodziliście"));
+
+`stressInfo(word)` returns an object with:
+
+- word
+- syllables
+- ipaSyllables
+- syllableIndex
+- stressFromEnd
+- ipa
+- ipaTranscribed
+- confidence
+
+Example:
+
+    {
+      "word": "chodziliście",
+      "syllables": ["cho", "dzi", "li", "ście"],
+      "ipaSyllables": ["xɔ", "d͡zi", "lʲi", "ɕt͡ɕɛ"],
+      "syllableIndex": 1,
+      "stressFromEnd": 3,
+      "ipa": null,
+      "ipaTranscribed": "xɔˈd͡zilʲiɕt͡ɕɛ",
+      "confidence": "rule"
+    }
 
 ## Distribution Checklist
 

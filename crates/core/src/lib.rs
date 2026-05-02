@@ -50,4 +50,12 @@ impl StressResult {
         }
         transcribe::transcribe(&self.syllables, self.syllable_index)
     }
+
+    /// Compute IPA per syllable from orthographic rules.
+    ///
+    /// This intentionally uses the same G2P pipeline as `ipa_transcribed()` and
+    /// does not attempt to split dictionary IPA strings.
+    pub fn ipa_transcribed_syllables(&self) -> Vec<String> {
+        transcribe::transcribe_syllables(&self.syllables)
+    }
 }

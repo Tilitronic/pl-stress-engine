@@ -29,6 +29,8 @@ fn stress(word: &str) -> usize {
 ///   ``syllable_index`` – 0-based index of stressed syllable from start
 ///   ``stress_from_end`` – 1-based from end (2 = penultimate, 3 = antepenult, …)
 ///   ``ipa``           – IPA transcription string, or ``None``
+///   ``ipa_transcribed`` – G2P IPA transcription string (always present)
+///   ``ipa_syllables`` – list of IPA syllables aligned with ``syllables``
 ///   ``confidence``    – ``"exact"`` | ``"rule"`` | ``"default"``
 ///
 /// Example::
@@ -57,6 +59,9 @@ fn stress_info(py: Python<'_>, word: &str) -> PyResult<Py<PyDict>> {
     dict.set_item("syllable_index", r.syllable_index)?;
     dict.set_item("stress_from_end", r.stress_from_end())?;
     dict.set_item("ipa", r.ipa.as_deref())?;
+    dict.set_item("ipa_transcribed", r.ipa_transcribed())?;
+    let ipa_syllables = PyList::new_bound(py, r.ipa_transcribed_syllables());
+    dict.set_item("ipa_syllables", ipa_syllables)?;
     dict.set_item("confidence", conf)?;
     Ok(dict.into())
 }

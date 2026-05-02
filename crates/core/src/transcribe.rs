@@ -415,6 +415,32 @@ pub(crate) fn tokenize_and_palatalize(word: &str) -> Vec<(String, bool)> {
     tokens.into_iter().map(|t| (t.ortho, t.is_skip)).collect()
 }
 
+/// Produce IPA for each syllable independently while preserving cross-syllable
+/// assimilation context (voicing, nasal allophones).
+pub fn transcribe_syllables(syllables: &[String]) -> Vec<String> {
+    if syllables.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::with_capacity(syllables.len());
+    for (i, syl) in syllables.iter().enumerate() {
+        // First char of the next syllable — used for cross-boundary assimilation
+        // (velar nasal n→ŋ before k/g; obstruent voicing; nasal diphthong context).
+        let fallback_next: Option<char> = syllables
+            .get(i + 1)
+            .and_then(|s| s.chars().next());
+
+        let chunk = syl.to_lowercase();
+        let mut tokens = pass_tokenize::run(&chunk);
+        pass_palatalize::run(&mut tokens, fallback_next);
+        pass_nasals::run(&mut tokens, fallback_next);
+        pass_voice::run(&mut tokens, fallback_next);
+        out.push(pass_compose::run(&tokens));
+    }
+
+    out
+}
+
 /// Produce an IPA string for the given syllable sequence.
 ///
 /// A primary-stress mark `ˈ` is inserted before `syllables[stress_idx]`.
@@ -428,27 +454,18 @@ pub(crate) fn tokenize_and_palatalize(word: &str) -> Vec<(String, bool)> {
 /// assert_eq!(transcribe(&syls, 0), "ˈmämä");
 /// ```
 pub fn transcribe(syllables: &[String], stress_idx: usize) -> String {
-    if syllables.is_empty() {
+    let ipa_syllables = transcribe_syllables(syllables);
+    if ipa_syllables.is_empty() {
         return String::new();
     }
+
     let mut out = String::new();
-    for (i, syl) in syllables.iter().enumerate() {
+    for (i, syl_ipa) in ipa_syllables.iter().enumerate() {
         // Stress mark before the stressed syllable (only for polysyllabic words).
-        if syllables.len() > 1 && i == stress_idx {
+        if ipa_syllables.len() > 1 && i == stress_idx {
             out.push('ˈ');
         }
-        // First char of the next syllable — used for cross-boundary assimilation
-        // (velar nasal n→ŋ before k/g; obstruent voicing; nasal diphthong context).
-        let fallback_next: Option<char> = syllables
-            .get(i + 1)
-            .and_then(|s| s.chars().next());
-
-        let chunk = syl.to_lowercase();
-        let mut tokens = pass_tokenize::run(&chunk);
-        pass_palatalize::run(&mut tokens, fallback_next);
-        pass_nasals::run(&mut tokens, fallback_next);
-        pass_voice::run(&mut tokens, fallback_next);
-        out.push_str(&pass_compose::run(&tokens));
+        out.push_str(syl_ipa);
     }
     out
 }
@@ -463,6 +480,14 @@ mod tests {
     fn t(syllables: &[&str], stress_idx: usize) -> String {
         let syls: Vec<String> = syllables.iter().map(|s| s.to_string()).collect();
         transcribe(&syls, stress_idx)
+    }
+
+    #[test]
+    fn transcribe_syllables_returns_boundary_aligned_chunks() {
+        let syls = vec!["cho".to_string(), "dzi".to_string(), "li".to_string(), "ście".to_string()];
+        let ipa = transcribe_syllables(&syls);
+        assert_eq!(ipa, vec!["xɔ", "d͡zi", "lʲi", "ɕt͡ɕɛ"]);
+        assert_eq!(transcribe(&syls, 1), "xɔˈd͡zilʲiɕt͡ɕɛ");
     }
 
     // ── V-01: basic vowels [A1 §3.1] ─────────────────────────────────────
