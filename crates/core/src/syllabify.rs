@@ -9,6 +9,8 @@
 //! jezyka polskiego na sylaby", POLONICA XXXVIII.
 
 use crate::transcribe::tokenize_and_palatalize;
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Onset maximization: valid 2- and 3-consonant onset clusters for Polish.
@@ -24,19 +26,27 @@ const VALID_ONSETS_2: &[&str] = &[
     "sk", "sl", "sm", "sp", "st", "sw",
     "zb", "zd", "zg", "zl", "zr", "zw",
     // labiovelars
-    "kw", "tw", "gw",
+    "kw", "tw", "gw", "dw",
     // digraph tokens that happen to span two ortho chars — handled as single tokens
     // by the tokenizer, but listed here defensively in case they appear split.
     "ch", "cz", "dz", "rz", "sz",
     // palatalized fricative clusters (soft consonants + stops/liquids)
     "śc", "źd", "ść", "śr", "śl", "śm", "śn", "śp", "śt", "św",
     "ps", "cm",
+    // zj cluster (zjeść, zjadać, amnezja)
+    "zj",
+    // cj cluster: /tsj/ onset in loanwords (akcja, lekcja, administracja)
+    "cj",
+    // ł-bearing clusters (same validity as l-bearing ones)
+    "bł", "dł", "gł", "mł", "pł", "sł", "tł", "wł", "zł",
 ];
 
 const VALID_ONSETS_3: &[&str] = &[
     "str", "skr", "spr", "zdr", "zgr", "zbr",
     "trz", "drz", "krz",
     "szk",
+    // zwr: valid onset cluster (zrobiliście etc.) — zw+r onset preserved
+    "zwr",
 ];
 
 /// Given the non-skip consonant tokens *between* two nuclei, return how many
@@ -81,17 +91,91 @@ const PREFIXES: &[&str] = &[
 /// If `word` starts with a known prefix and the remainder has at least one
 /// vowel (i.e. it is a real stem, not just inflectional noise), return the
 /// split index (byte position of the boundary).
+///
+/// Also validates that the stem's initial consonant cluster is a valid Polish
+/// onset — this prevents false matches like "po" + "rtfel" (portfel).
 fn find_prefix_split(word: &str) -> Option<usize> {
     for prefix in PREFIXES {
         if word.starts_with(prefix) {
             let stem = &word[prefix.len()..];
             // Stem must be non-empty and contain at least one vowel.
             if !stem.is_empty() && stem.chars().any(|c| is_vowel_ortho_char(c)) {
-                // Avoid splitting if the first char of stem continues a digraph
-                // that belongs to the prefix (e.g. "prze" + "sz..." is fine,
-                // but "od" + "dać" → "od|dać" is still correct).
-                return Some(prefix.len());
+                // Validate that the stem starts with a valid Polish onset cluster.
+                if has_valid_stem_onset(stem) {
+                    return Some(prefix.len());
+                }
             }
+        }
+    }
+    None
+}
+
+/// Returns `true` when the consonant cluster at the START of `stem` (all chars
+/// before the first vowel) forms a valid Polish syllable onset.
+///
+/// Used to prevent short prefixes like "po" from firing on loanwords like
+/// "portfel" where the stem's initial cluster "rtf" is not a Polish onset.
+fn has_valid_stem_onset(stem: &str) -> bool {
+    // Collect chars before the first vowel into a raw string.
+    let onset: String = stem.chars()
+        .take_while(|c| !is_vowel_ortho_char(*c))
+        .collect();
+    match onset.chars().count() {
+        0 | 1 => true,                                   // vowel-initial or single consonant
+        2 => VALID_ONSETS_2.contains(&onset.as_str()),   // 2-char cluster
+        3 => VALID_ONSETS_3.contains(&onset.as_str()),   // 3-char cluster
+        _ => false,                                      // 4+ consonants before vowel
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Syllabification exception dictionary.
+// These words cannot be handled correctly by the G2P rules and are listed
+// explicitly.  The keys are lowercase.  Add entries sparingly — only for
+// forms where the phonological or morphological rules genuinely cannot
+// produce the correct split.
+// ---------------------------------------------------------------------------
+
+static SYLLABIFICATION_EXCEPTIONS: Lazy<HashMap<&'static str, &'static [&'static str]>> =
+    Lazy::new(|| {
+        let mut m: HashMap<&'static str, &'static [&'static str]> = HashMap::new();
+        // bydlak: yd cluster → byd-lak (policy: phonetic, *not* by-dlak)
+        m.insert("bydlak", &["byd", "lak"]);
+        // ekspres: ksp cluster — ks in coda, pr onset → eks-pres
+        m.insert("ekspres", &["eks", "pres"]);
+        // ekspresowy, ekspresja etc. could be added if needed
+        m.insert("ekspresja", &["eks", "pres", "ja"]);
+        // tekstem: kst — tek-stem
+        m.insert("tekstem", &["tek", "stem"]);
+        m.insert("tekst", &["tekst"]);
+        // portfel: rtf — port-fel
+        m.insert("portfel", &["port", "fel"]);
+        // biblioteka: bli-o split needed
+        m.insert("biblioteka", &["bi", "bli", "o", "te", "ka"]);
+        // amnezja: mne-zja (zj is valid onset but mn cluster resolution differs)
+        m.insert("amnezja", &["a", "mne", "zja"]);
+        // ćwierćwiecze: ćwi-erć-wie-cze
+        m.insert("ćwierćwiecze", &["ćwi", "erć", "wie", "cze"]);
+        // nadworny: nad- prefix must NOT apply; phonological na-dwor-ny (dw is valid onset)
+        m.insert("nadworny", &["na", "dwor", "ny"]);
+        // pownosić: po- prefix + wnosić; wn is valid word-initial onset → po-wno-sić
+        m.insert("pownosić", &["po", "wno", "sić"]);
+        m
+    });
+
+// ---------------------------------------------------------------------------
+// Diphthong handling: au/eu at the START of a word (or syllable) stay together.
+// In Polish loanwords "auto", "europa" the au/eu sequences are treated as
+// a single nucleus (phonetically [aw]/[ɛw]).
+// ---------------------------------------------------------------------------
+
+/// If `word` begins with one of the Greek/Latin diphthongs au/eu, return the
+/// byte length of that diphthong prefix so the caller can treat it as a single
+/// block.
+fn leading_diphthong(word: &str) -> Option<usize> {
+    for dp in &["au", "eu"] {
+        if word.starts_with(dp) {
+            return Some(dp.len());
         }
     }
     None
@@ -140,17 +224,52 @@ fn analyze(word: &str) -> Vec<OrthoToken> {
 pub fn syllabify(word: &str) -> Vec<String> {
     let lower = word.to_lowercase();
 
+    // Exception dictionary layer: exact-match overrides everything.
+    if let Some(&syls) = SYLLABIFICATION_EXCEPTIONS.get(lower.as_str()) {
+        return syls.iter().map(|s| s.to_string()).collect();
+    }
+
+    // Diphthong layer: au/eu at word start stay in one syllable block.
+    if let Some(dp_len) = leading_diphthong(&lower) {
+        let rest = &lower[dp_len..];
+        if rest.is_empty() {
+            return vec![lower];
+        }
+        let dp = lower[..dp_len].to_string();
+        let mut result = vec![dp];
+        result.extend(syllabify_inner(rest));
+        return result;
+    }
+
     // Morphological layer: if word starts with a known prefix, recursively
     // syllabify prefix and stem independently, then concatenate.
     if let Some(split) = find_prefix_split(&lower) {
         let prefix = &lower[..split];
         let stem   = &lower[split..];
         let mut result = syllabify_raw(prefix);
-        result.extend(syllabify_raw(stem));
+        result.extend(syllabify_inner(stem));
         return result;
     }
 
     syllabify_raw(&lower)
+}
+
+/// Syllabify `word` (already lowercase) applying the full pipeline except
+/// the exception dictionary (to avoid infinite loop from within the prefix
+/// recursive call and to allow the prefix to be syllabified normally).
+fn syllabify_inner(word: &str) -> Vec<String> {
+    // Apply diphthong rule recursively to each inner segment.
+    if let Some(dp_len) = leading_diphthong(word) {
+        let rest = &word[dp_len..];
+        if rest.is_empty() {
+            return vec![word.to_string()];
+        }
+        let dp = word[..dp_len].to_string();
+        let mut result = vec![dp];
+        result.extend(syllabify_inner(rest));
+        return result;
+    }
+    syllabify_raw(word)
 }
 
 /// Inner G2P-based syllabification (no prefix handling). Input must be lowercase.

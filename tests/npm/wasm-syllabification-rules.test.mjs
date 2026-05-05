@@ -10,7 +10,7 @@ if (typeof wasm.default === "function") {
 }
 
 function syllables(word) {
-  return wasm.stressInfo(word).syllables;
+  return wasm.lookup(word).readings[0].wordSyllables;
 }
 
 test("Rule 1: every syllable has a vowel nucleus", () => {

@@ -127,19 +127,28 @@ Generated package:
 
     import polish_stress
 
-    info = polish_stress.stress_info("matematyka")
-    print(info)
+    result = polish_stress.lookup("matematyka")
+    print(result["readings"][0]["stressed_form"])   # → "matemátyka"
+    print(result["readings"][0]["syllable_index"])  # → 2
+    print(result["readings"][0]["ipa_syllables"])   # → ["ma","tɛ","ˈma","tɨ","ka"]
 
-Fields:
+    # Convenience shortcuts
+    polish_stress.mark("matematyka")  # → "matemátyka"
+    polish_stress.stress("matematyka")  # → 2  (0-based syllable index)
 
-- word
-- syllables
-- syllable_index
-- stress_from_end
-- ipa
-- ipa_transcribed
-- ipa_syllables
-- confidence
+Fields returned by `lookup(word)["readings"][0]`:
+
+- `syllable_index` — 0-based stressed syllable from start
+- `stress_from_end` — 1-based from end (2 = penultimate)
+- `syllable_count` — total syllable count (0 for clitics like "z", "w")
+- `form` — normalised (lowercase) form
+- `stressed_form` — form with combining acute U+0301 on the stressed vowel
+- `word_syllables` — grapheme syllables aligned with `ipa_syllables`
+- `ipa` — full IPA transcription
+- `ipa_syllables` — IPA per syllable; stressed syllable prefixed with `ˈ`
+- `tokens` — token-level phonetic detail (empty list for Polish)
+- `morph` — UD morphological readings (empty list for Polish)
+- `confidence` — `"exact"` | `"rule"` | `"default"`
 
 ## Web Usage
 
@@ -149,33 +158,48 @@ Install browser package:
 
 Then in app code:
 
-    import { stress, stressInfo } from "@tilitronic/polish-stress-wasm";
+    import { lookup, mark, stress } from "@tilitronic/polish-stress-wasm";
 
-    console.log(stress("matematyka"));
-    console.log(stressInfo("chodziliście"));
+    console.log(lookup("matematyka"));
+    console.log(mark("chodziliście"));   // → "chodzilíście"
+    console.log(stress("matematyka"));   // → 2
 
-`stressInfo(word)` returns an object with:
+`lookup(word)` returns an object with:
 
-- word
-- syllables
-- ipaSyllables
-- syllableIndex
-- stressFromEnd
-- ipa
-- ipaTranscribed
-- confidence
+- `form` — normalised input
+- `readings` — array with one element (Polish stress is deterministic)
+
+Each reading has:
+
+- `syllableIndex` — 0-based stressed syllable from start
+- `stressFromEnd` — 1-based from end (2 = penultimate)
+- `syllableCount` — 0 for zero-syllable words like "z", "w"
+- `form` — normalised form
+- `stressedForm` — combining acute on stressed vowel
+- `wordSyllables` — grapheme syllables
+- `ipa` — full IPA
+- `ipaSyllables` — IPA per syllable; stressed prefixed with `ˈ`
+- `tokens` — empty array (Polish)
+- `morph` — empty array (Polish)
+- `confidence` — `"exact"` | `"rule"` | `"default"`
 
 Example:
 
     {
-      "word": "chodziliście",
-      "syllables": ["cho", "dzi", "li", "ście"],
-      "ipaSyllables": ["xɔ", "d͡zi", "lʲi", "ɕt͡ɕɛ"],
-      "syllableIndex": 1,
-      "stressFromEnd": 3,
-      "ipa": null,
-      "ipaTranscribed": "xɔˈd͡zilʲiɕt͡ɕɛ",
-      "confidence": "rule"
+      "form": "chodziliście",
+      "readings": [{
+        "syllableIndex": 1,
+        "stressFromEnd": 3,
+        "syllableCount": 4,
+        "form": "chodziliście",
+        "stressedForm": "chódziliście",
+        "wordSyllables": ["cho", "dzi", "li", "ście"],
+        "ipa": "xɔd͡zilʲiɕt͡ɕɛ",
+        "ipaSyllables": ["xɔ", "ˈd͡zi", "lʲi", "ɕt͡ɕɛ"],
+        "tokens": [],
+        "morph": [],
+        "confidence": "rule"
+      }]
     }
 
 ## Distribution Checklist

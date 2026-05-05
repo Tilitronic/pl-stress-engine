@@ -13,23 +13,25 @@ if (typeof wasm.default === "function") {
 
 test("wasm package exposes stress functions", () => {
   assert.equal(typeof wasm.stress, "function");
-  assert.equal(typeof wasm.stressInfo, "function");
+  assert.equal(typeof wasm.lookup, "function");
+  assert.equal(typeof wasm.mark, "function");
 });
 
 test("difficult Polish words have expected stress-from-end", async (t) => {
   for (const sample of difficultPolishWords) {
     await t.test(`${sample.word} (${sample.category})`, () => {
-      const info = wasm.stressInfo(sample.word);
+      const result = wasm.lookup(sample.word);
+      const info = result.readings[0];
 
-      assert.equal(typeof info, "object");
-      assert.equal(info.word, sample.word);
+      assert.equal(typeof result, "object");
+      assert.equal(result.form, sample.word.toLowerCase());
       assert.equal(info.stressFromEnd, sample.expectedStressFromEnd);
 
       const expectedIndex =
-        info.syllables.length - sample.expectedStressFromEnd;
+        info.wordSyllables.length - sample.expectedStressFromEnd;
       assert.equal(info.syllableIndex, expectedIndex);
       assert.ok(Array.isArray(info.ipaSyllables));
-      assert.equal(info.ipaSyllables.length, info.syllables.length);
+      assert.equal(info.ipaSyllables.length, info.wordSyllables.length);
     });
   }
 });

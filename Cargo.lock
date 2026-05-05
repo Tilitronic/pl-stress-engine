@@ -256,7 +256,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "pl-stress-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ahash",
  "bincode",
@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "pl-stress-python"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "once_cell",
  "pl-stress-core",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "pl-stress-wasm"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "js-sys",
  "pl-stress-core",

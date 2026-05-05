@@ -147,6 +147,23 @@ impl StressDict {
     pub fn stress_index(&self, word: &str) -> usize {
         self.stress(word).syllable_index
     }
+
+    /// Look up *word* and return a [`WordLookupResult`] with one [`StressReading`].
+    ///
+    /// Polish stress is near-deterministic, so `readings` always contains exactly
+    /// one entry.  The shape mirrors the Ukrainian engine's `lookup()` for
+    /// cross-engine API parity.
+    pub fn lookup(&self, word: &str) -> crate::WordLookupResult {
+        let lower = word.to_lowercase();
+        let r = self.stress(&lower);
+        let reading = r.into_reading(lower.clone());
+        crate::WordLookupResult { form: lower, readings: vec![reading] }
+    }
+
+    /// Total number of entries in the exception dictionary.
+    pub fn exceptions_len(&self) -> usize {
+        self.exceptions.len()
+    }
 }
 
 /// Initialise the global singleton from raw bytes (call once at startup).
@@ -268,10 +285,11 @@ mod tests {
         let dict = StressDict { exceptions };
         let result = dict.stress("biblioteka");
 
-        // New G2P syllabifier gives 4-syllable phonological split:
-        // bi-blio-te-ka. The dict's stored stress_idx=2 maps to "te" (correct).
-        assert_eq!(result.syllables, vec!["bi", "blio", "te", "ka"]);
-        assert_eq!(result.syllable_index, 2);
+        // Syllabifier exception produces 5 syllables: bi-bli-o-te-ka.
+        // Stored stress_idx=2 gets adjusted by legacy_split_offset (bli+o matches ci+V pattern)
+        // → corrected_idx=3 → syllable "te" (penultimate, stress_from_end=2).
+        assert_eq!(result.syllables, vec!["bi", "bli", "o", "te", "ka"]);
+        assert_eq!(result.syllable_index, 3);
         assert_eq!(result.stress_from_end(), 2);
         assert_eq!(result.confidence, Confidence::Exact);
     }
