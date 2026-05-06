@@ -158,11 +158,16 @@ Install browser package:
 
 Then in app code:
 
-    import { lookup, mark, stress } from "@tilitronic/polish-stress-wasm";
+    import { lookup, mark, stress, markBatch, stressBatch, lookupBatch } from "@tilitronic/polish-stress-wasm";
 
     console.log(lookup("matematyka"));
-    console.log(mark("chodziliście"));   // → "chodzilíście"
+    console.log(mark("chodziliście"));   // → "chódziliście"
     console.log(stress("matematyka"));   // → 2
+
+    // Batch processing — faster than calling mark/stress/lookup in a loop
+    markBatch(["matematyka", "chodziliście"]);     // → ["matemátyka", "chódziliście"]
+    stressBatch(["matematyka", "chodziliście"]);   // → Int32Array [2, 1]
+    lookupBatch(["matematyka", "chodziliście"]);   // → Array of lookup result objects
 
 `lookup(word)` returns an object with:
 
@@ -182,6 +187,29 @@ Each reading has:
 - `tokens` — empty array (Polish)
 - `morph` — empty array (Polish)
 - `confidence` — `"exact"` | `"rule"` | `"default"`
+
+### Batch functions
+
+All three single-word functions have a batch variant that is significantly faster
+when processing multiple words, because the JS↔WASM overhead is amortised:
+
+| Single         | Batch                | Return type  |
+| -------------- | -------------------- | ------------ |
+| `mark(word)`   | `markBatch(words)`   | `string[]`   |
+| `stress(word)` | `stressBatch(words)` | `Int32Array` |
+| `lookup(word)` | `lookupBatch(words)` | object array |
+
+```js
+markBatch(["matematyka", "biblioteka", "GPS"]);
+// → ["matemátyka", "biblióteka", "GPS"]
+
+stressBatch(["matematyka", "biblioteka"]);
+// → Int32Array [2, 2]
+
+const results = lookupBatch(["ekspres", "portfel"]);
+results[0].readings[0].wordSyllables; // → ["eks", "pres"]
+results[1].readings[0].stressedForm; // → "pórtfel"
+```
 
 Example:
 
