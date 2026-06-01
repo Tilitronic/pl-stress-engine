@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
@@ -7,11 +7,39 @@ import { fileURLToPath } from "node:url";
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const root = resolve(scriptDir, "..");
 const dictPath = resolve(root, "data/processed/exceptions.bin");
+const generatedContractsPath = resolve(root, "crates/wasm/generated/contracts.d.ts");
 const pkgNodePackageJsonPath = resolve(
   root,
   "crates/wasm/pkg-node/package.json",
 );
 const pkgBundlerPackageJsonPath = resolve(root, "crates/wasm/pkg/package.json");
+const pkgNodeContractsPath = resolve(root, "crates/wasm/pkg-node/contracts.d.ts");
+const pkgBundlerContractsPath = resolve(root, "crates/wasm/pkg/contracts.d.ts");
+const pkgNodeTypesPath = resolve(root, "crates/wasm/pkg-node/pl_stress_wasm.d.ts");
+const pkgBundlerTypesPath = resolve(root, "crates/wasm/pkg/pl_stress_wasm.d.ts");
+
+function patchWasmTypes(typesPath) {
+  if (!existsSync(typesPath)) {
+    return;
+  }
+
+  let content = readFileSync(typesPath, "utf8");
+
+  if (!content.includes('import type { WordLookupResult } from "./contracts";')) {
+    content = `${content}import type { WordLookupResult } from "./contracts";\n`;
+  }
+
+  content = content.replace(
+    "export function lookup(word: string): any;",
+    "export function lookup(word: string): WordLookupResult;",
+  );
+  content = content.replace(
+    "export function lookupBatch(words: Array<any>): any;",
+    "export function lookupBatch(words: Array<any>): WordLookupResult[];",
+  );
+
+  writeFileSync(typesPath, content, "utf8");
+}
 
 const wasmPackCandidates = [
   "wasm-pack",
@@ -42,6 +70,13 @@ const childPath = `${cargoBin}${pathSep}${process.env.PATH ?? ""}`;
 if (!existsSync(dictPath)) {
   console.error("Missing required dictionary file:");
   console.error(`  ${dictPath}`);
+  process.exit(1);
+}
+
+if (!existsSync(generatedContractsPath)) {
+  console.error("Missing generated contract types:");
+  console.error(`  ${generatedContractsPath}`);
+  console.error("Run `pnpm run generate:contracts` first.");
   process.exit(1);
 }
 
@@ -86,6 +121,11 @@ const resultBundler = spawnSync(
 const ok = resultNode.status === 0 && resultBundler.status === 0;
 
 if (ok) {
+  copyFileSync(generatedContractsPath, pkgNodeContractsPath);
+  copyFileSync(generatedContractsPath, pkgBundlerContractsPath);
+  patchWasmTypes(pkgNodeTypesPath);
+  patchWasmTypes(pkgBundlerTypesPath);
+
   if (existsSync(pkgNodePackageJsonPath)) {
     const p = JSON.parse(readFileSync(pkgNodePackageJsonPath, "utf8"));
     p.name = "@tilitronic/polish-stress-wasm-node";
@@ -94,6 +134,21 @@ if (ok) {
     p.author = "Tilitronic";
     p.license = "AGPL-3.0-or-later";
     p.private = true;
+    p.files = [
+      "pl_stress_wasm.js",
+      "pl_stress_wasm_bg.js",
+      "pl_stress_wasm_bg.wasm",
+      "pl_stress_wasm.d.ts",
+      "pl_stress_wasm_bg.wasm.d.ts",
+      "contracts.d.ts",
+    ];
+    p.exports = {
+      ".": {
+        types: "./pl_stress_wasm.d.ts",
+        default: "./pl_stress_wasm.js",
+      },
+      "./contracts": "./contracts.d.ts",
+    };
     p.scripts = {
       test: "node --test ../../../tests/npm/wasm-stress-difficult-words.test.mjs",
     };
@@ -121,7 +176,17 @@ if (ok) {
       "pl_stress_wasm_bg.wasm",
       "pl_stress_wasm.d.ts",
       "pl_stress_wasm_bg.wasm.d.ts",
+      "contracts.d.ts",
     ];
+    p.exports = {
+      ".": {
+        types: "./pl_stress_wasm.d.ts",
+        import: "./pl_stress_wasm.js",
+        default: "./pl_stress_wasm.js",
+      },
+      "./contracts": "./contracts.d.ts",
+      "./pl_stress_wasm_bg.wasm": "./pl_stress_wasm_bg.wasm",
+    };
     p.repository = {
       type: "git",
       url: "https://github.com/Tilitronic/pl-stress-engine.git",

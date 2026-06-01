@@ -7,6 +7,8 @@ pub use dict::{init_global_dict, global_dict, DictEntry, StressDict};
 pub use syllabify::{count_syllables, syllabify};
 pub use transcribe::transcribe;
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // ── Public result types ───────────────────────────────────────────────────────
@@ -28,7 +30,8 @@ pub enum Confidence {
 /// Polish currently provides no morphological data, so `pos`, `feats`, and
 /// `lemma` are always empty / `None` here.  The type is shared with the
 /// Ukrainian engine (`ua-stress-engine`) for cross-engine API parity.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct MorphReading {
     /// UD POS tags, e.g. `["NOUN"]`.  Empty for Polish.
     pub pos: Vec<String>,
@@ -45,7 +48,8 @@ pub struct MorphReading {
 ///
 /// Part of [`WordLookupResult`].  Mirrors `StressReading` in the Ukrainian
 /// engine so both engines can be consumed with the same client code.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct StressReading {
     // ── Stress position ──────────────────────────────────────────────────────
     /// 0-based index of the stressed syllable from the start of the word.
@@ -71,6 +75,8 @@ pub struct StressReading {
     /// IPA per syllable.  The stressed syllable is prefixed with `ˈ`.
     /// Empty for zero-syllable words.
     pub ipa_syllables: Vec<String>,
+    /// Token-level phonetic detail.  Empty for Polish.
+    pub tokens: Vec<String>,
     // ── Morphology (UD) ──────────────────────────────────────────────────────
     /// Morphological analyses sharing this stress position.  Empty for Polish.
     pub morph: Vec<MorphReading>,
@@ -86,7 +92,8 @@ pub struct StressReading {
 /// is near-deterministic).  For Ukrainian there may be multiple readings
 /// (heteronyms and variative stress).  `readings` is empty only for words
 /// completely absent from all sources.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WordLookupResult {
     /// Normalized query form.
     pub form: String,
@@ -162,6 +169,7 @@ impl StressResult {
             word_syllables: self.syllables,
             ipa,
             ipa_syllables,
+            tokens: Vec::new(),
             morph: Vec::new(),
             confidence: Some(conf.to_string()),
         }

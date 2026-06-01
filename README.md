@@ -114,14 +114,20 @@ Install wasm target once:
 
     rustup target add wasm32-unknown-unknown
 
+Generate the JSON Schema and TypeScript contracts used by the frontend:
+
+    pnpm run generate:contracts
+
 Build WASM package:
 
-    C:\Users\qualt\.cargo\bin\wasm-pack.exe build crates/wasm --target web --release
+    pnpm run build:wasm:node
 
 Generated package:
 
 - crates/wasm/pkg/pl_stress_wasm.js
 - crates/wasm/pkg/pl_stress_wasm_bg.wasm
+- crates/wasm/generated/word-lookup-result.schema.json
+- crates/wasm/generated/contracts.d.ts
 
 ## Python Usage
 
@@ -159,10 +165,14 @@ Install browser package:
 Then in app code:
 
     import { lookup, mark, stress, markBatch, stressBatch, lookupBatch } from "@tilitronic/polish-stress-wasm";
+    import type { WordLookupResult } from "@tilitronic/polish-stress-wasm/contracts";
 
     console.log(lookup("matematyka"));
     console.log(mark("chodziliście"));   // → "chódziliście"
     console.log(stress("matematyka"));   // → 2
+
+    const result = lookup("matematyka") as WordLookupResult;
+    console.log(result.readings[0].stressedForm);
 
     // Batch processing — faster than calling mark/stress/lookup in a loop
     markBatch(["matematyka", "chodziliście"]);     // → ["matemátyka", "chódziliście"]

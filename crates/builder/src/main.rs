@@ -7,12 +7,15 @@
 //!
 //! Run after the Python pipeline:
 //!   cargo run -p builder --release
+//!
+//! Export the public lookup contract schema:
+//!   cargo run -p builder -- export-schemas
 
 mod export;
 
 use ahash::AHashMap;
 use anyhow::{Context, Result};
-use pl_stress_core::DictEntry;
+use pl_stress_core::{DictEntry, WordLookupResult};
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -23,10 +26,19 @@ struct JsonEntry {
     ipa: Option<String>,
 }
 
-fn main() -> Result<()> {
-    let data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("data");
+fn export_schemas(root_dir: &std::path::Path) -> Result<()> {
+    let schema_dir = root_dir.join("crates/wasm/generated");
+    let lookup_schema_path = schema_dir.join("word-lookup-result.schema.json");
+
+    std::fs::create_dir_all(&schema_dir)?;
+    export::write_json_schema::<WordLookupResult>(&lookup_schema_path)?;
+
+    eprintln!("Exported {:?}.", lookup_schema_path);
+    Ok(())
+}
+
+fn build_exceptions(root_dir: &std::path::Path) -> Result<()> {
+    let data_dir = root_dir.join("data");
 
     let json_path = data_dir.join("processed/exceptions.json");
     let bin_path  = data_dir.join("processed/exceptions.bin");
@@ -55,5 +67,18 @@ fn main() -> Result<()> {
 
     eprintln!("Done.  Rebuild the wasm/python crates to embed the new dict.");
     Ok(())
+}
+
+fn main() -> Result<()> {
+    let root_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let command = std::env::args().nth(1);
+
+    match command.as_deref() {
+        Some("export-schemas") => export_schemas(&root_dir),
+        Some(other) => anyhow::bail!(
+            "Unknown command: {other}. Supported commands: export-schemas"
+        ),
+        None => build_exceptions(&root_dir),
+    }
 }
 

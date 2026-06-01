@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
@@ -7,10 +7,36 @@ import { fileURLToPath } from "node:url";
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const root = resolve(scriptDir, "..");
 const dictPath = resolve(root, "data/processed/exceptions.bin");
+const generatedContractsPath = resolve(root, "crates/wasm/generated/contracts.d.ts");
 const pkgBundlerPackageJsonPath = resolve(
   root,
   "crates/wasm/pkg-bundler/package.json",
 );
+const pkgBundlerContractsPath = resolve(root, "crates/wasm/pkg-bundler/contracts.d.ts");
+const pkgBundlerTypesPath = resolve(root, "crates/wasm/pkg-bundler/pl_stress_wasm.d.ts");
+
+function patchWasmTypes(typesPath) {
+  if (!existsSync(typesPath)) {
+    return;
+  }
+
+  let content = readFileSync(typesPath, "utf8");
+
+  if (!content.includes('import type { WordLookupResult } from "./contracts";')) {
+    content = `${content}import type { WordLookupResult } from "./contracts";\n`;
+  }
+
+  content = content.replace(
+    "export function lookup(word: string): any;",
+    "export function lookup(word: string): WordLookupResult;",
+  );
+  content = content.replace(
+    "export function lookupBatch(words: Array<any>): any;",
+    "export function lookupBatch(words: Array<any>): WordLookupResult[];",
+  );
+
+  writeFileSync(typesPath, content, "utf8");
+}
 
 const wasmPackCandidates = [
   "wasm-pack",
@@ -48,6 +74,13 @@ if (!existsSync(dictPath)) {
   process.exit(1);
 }
 
+if (!existsSync(generatedContractsPath)) {
+  console.error("Missing generated contract types:");
+  console.error(`  ${generatedContractsPath}`);
+  console.error("Run `pnpm run generate:contracts` first.");
+  process.exit(1);
+}
+
 const result = spawnSync(
   wasmPack,
   [
@@ -72,6 +105,9 @@ const result = spawnSync(
 
 if (typeof result.status === "number") {
   if (result.status === 0 && existsSync(pkgBundlerPackageJsonPath)) {
+    copyFileSync(generatedContractsPath, pkgBundlerContractsPath);
+    patchWasmTypes(pkgBundlerTypesPath);
+
     const pkgJson = JSON.parse(readFileSync(pkgBundlerPackageJsonPath, "utf8"));
     pkgJson.name = "@tilitronic/polish-stress-wasm";
     pkgJson.main = "pl_stress_wasm.js";
@@ -82,6 +118,7 @@ if (typeof result.status === "number") {
         import: "./pl_stress_wasm.js",
         default: "./pl_stress_wasm.js",
       },
+      "./contracts": "./contracts.d.ts",
       "./pl_stress_wasm_bg.wasm": "./pl_stress_wasm_bg.wasm",
     };
     pkgJson.description =
@@ -107,6 +144,13 @@ if (typeof result.status === "number") {
     ];
     pkgJson.engines = { node: ">=16.0.0" };
     pkgJson.publishConfig = { access: "public" };
+    pkgJson.files = [
+      "pl_stress_wasm_bg.wasm",
+      "pl_stress_wasm.js",
+      "pl_stress_wasm_bg.js",
+      "pl_stress_wasm.d.ts",
+      "contracts.d.ts",
+    ];
     pkgJson.scripts = {
       pretest: "node ../../../scripts/build-wasm-bundler.mjs",
       test: "node --test ../../../tests/npm/wasm-stress-difficult-words.test.mjs",

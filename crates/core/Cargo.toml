@@ -8,6 +8,7 @@ license = "AGPL-3.0-or-later"
 ahash = "0.8"
 bincode = "1"
 serde = { version = "1", features = ["derive"] }
+schemars = { version = "0.8", features = ["derive"] }
 once_cell = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
