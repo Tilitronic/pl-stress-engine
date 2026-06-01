@@ -7,16 +7,28 @@ import { fileURLToPath } from "node:url";
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const root = resolve(scriptDir, "..");
 const dictPath = resolve(root, "data/processed/exceptions.bin");
-const generatedContractsPath = resolve(root, "crates/wasm/generated/contracts.d.ts");
+const generatedContractsPath = resolve(
+  root,
+  "crates/wasm/generated/contracts.d.ts",
+);
 const pkgNodePackageJsonPath = resolve(
   root,
   "crates/wasm/pkg-node/package.json",
 );
 const pkgBundlerPackageJsonPath = resolve(root, "crates/wasm/pkg/package.json");
-const pkgNodeContractsPath = resolve(root, "crates/wasm/pkg-node/contracts.d.ts");
+const pkgNodeContractsPath = resolve(
+  root,
+  "crates/wasm/pkg-node/contracts.d.ts",
+);
 const pkgBundlerContractsPath = resolve(root, "crates/wasm/pkg/contracts.d.ts");
-const pkgNodeTypesPath = resolve(root, "crates/wasm/pkg-node/pl_stress_wasm.d.ts");
-const pkgBundlerTypesPath = resolve(root, "crates/wasm/pkg/pl_stress_wasm.d.ts");
+const pkgNodeTypesPath = resolve(
+  root,
+  "crates/wasm/pkg-node/pl_stress_wasm.d.ts",
+);
+const pkgBundlerTypesPath = resolve(
+  root,
+  "crates/wasm/pkg/pl_stress_wasm.d.ts",
+);
 
 function patchWasmTypes(typesPath) {
   if (!existsSync(typesPath)) {
@@ -25,7 +37,9 @@ function patchWasmTypes(typesPath) {
 
   let content = readFileSync(typesPath, "utf8");
 
-  if (!content.includes('import type { WordLookupResult } from "./contracts";')) {
+  if (
+    !content.includes('import type { WordLookupResult } from "./contracts";')
+  ) {
     content = `${content}import type { WordLookupResult } from "./contracts";\n`;
   }
 

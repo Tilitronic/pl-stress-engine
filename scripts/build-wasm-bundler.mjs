@@ -7,13 +7,22 @@ import { fileURLToPath } from "node:url";
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const root = resolve(scriptDir, "..");
 const dictPath = resolve(root, "data/processed/exceptions.bin");
-const generatedContractsPath = resolve(root, "crates/wasm/generated/contracts.d.ts");
+const generatedContractsPath = resolve(
+  root,
+  "crates/wasm/generated/contracts.d.ts",
+);
 const pkgBundlerPackageJsonPath = resolve(
   root,
   "crates/wasm/pkg-bundler/package.json",
 );
-const pkgBundlerContractsPath = resolve(root, "crates/wasm/pkg-bundler/contracts.d.ts");
-const pkgBundlerTypesPath = resolve(root, "crates/wasm/pkg-bundler/pl_stress_wasm.d.ts");
+const pkgBundlerContractsPath = resolve(
+  root,
+  "crates/wasm/pkg-bundler/contracts.d.ts",
+);
+const pkgBundlerTypesPath = resolve(
+  root,
+  "crates/wasm/pkg-bundler/pl_stress_wasm.d.ts",
+);
 
 function patchWasmTypes(typesPath) {
   if (!existsSync(typesPath)) {
@@ -22,7 +31,9 @@ function patchWasmTypes(typesPath) {
 
   let content = readFileSync(typesPath, "utf8");
 
-  if (!content.includes('import type { WordLookupResult } from "./contracts";')) {
+  if (
+    !content.includes('import type { WordLookupResult } from "./contracts";')
+  ) {
     content = `${content}import type { WordLookupResult } from "./contracts";\n`;
   }
 
